@@ -1,0 +1,46 @@
+# `use-https`
+
+```bash
+fg-dist use-https [name...] [--dry-run] [--no-verify]
+```
+
+Rewrites submodule urls from ssh to https, so a build host without a key can
+clone them. See [Submodule urls](/overview/urls).
+
+```
+apps/id  git@github.com:acme/id.git -> https://github.com/acme/id.git
+packages/design  ssh://git@gitlab.com:22/acme/design.git -> https://gitlab.com/acme/design.git
+
+.gitmodules updated. Commit it to record the new urls.
+```
+
+It updates `.gitmodules`, runs `git submodule sync` so existing checkouts
+follow, and leaves the change for you to commit. Running it again reports that
+every url is already https.
+
+## It then checks they can be cloned
+
+Https is necessary but not sufficient: a build host has no credentials, so the
+repository has to be readable anonymously. Each remote is asked for a ref with
+prompting disabled, so a private one fails immediately rather than waiting for
+a password nobody is there to type.
+
+```
+Checking whether each can be cloned without credentials:
+  apps/id  public
+  apps/members  not readable
+
+1 of these cannot be read anonymously, so a build host still cannot clone them.
+Make them public, or expect the build to fail.
+```
+
+Exits non-zero when any cannot be read. `--no-verify` skips the check, for
+offline use.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `[name...]` | only these modules |
+| `--dry-run` | report without changing `.gitmodules` |
+| `--no-verify` | skip the anonymous-clone check |

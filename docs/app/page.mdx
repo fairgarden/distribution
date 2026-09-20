@@ -1,0 +1,46 @@
+# @fairgarden/distribution
+
+Ship a set of versioned modules together.
+
+End users do not care about semver. They want to know how old their copy is, and
+`2024.12.01` says that at a glance where `1.2.1` does not. Developers do care,
+because semver says how much work an upgrade will be. A distribution serves both
+by using each where it belongs: the distribution is versioned by date, the
+modules inside it by semver.
+
+```
+@fairgarden/core  2024.12.01
+  @fairgarden/id          1.2.3
+  @fairgarden/design      1.5.6
+  @fairgarden/membership  1.0.0
+```
+
+Modules are git submodules, so the commit is the pin and the version is whatever
+the module's own `package.json` says. Nothing in the distribution repository
+restates it.
+
+## Start here
+
+- [Versioning](/overview/versioning) — why two schemes, and where a version comes from
+- [Modules](/overview/modules) — apps, packages, and how they resolve
+- [Extending](/overview/extending) — one distribution built on another
+- [Deploying](/overview/deploying) — one deployment, or many
+- [Growing a module](/overview/growing) — building in place, then extracting
+- [Submodule urls](/overview/urls) — what a build host can actually clone
+- [Commands](/commands) — the `fg-dist` CLI
+- [Functions](/functions) — the programmatic API
+
+## Install
+
+```bash
+pnpm add -D @fairgarden/distribution
+```
+
+Or scaffold without installing anything:
+
+```bash
+pnpx @fairgarden/distribution init distribution acme --name @acme/core
+```
+
+Mounting a distribution's apps into a single Next deployment is a separate
+concern, handled by `@fairgarden/monolith`.

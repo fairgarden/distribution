@@ -1,0 +1,56 @@
+# `extract`
+
+```bash
+fg-dist extract <path> --url <git-url> [--ssh] [--no-tag]
+```
+
+Turns a directory that grew inside the distribution into its own repository and
+a submodule of it. See [Growing a module](/overview/growing).
+
+```bash
+fg-dist extract packages/charts --url https://github.com/acme/charts.git
+```
+
+```
+packages/charts is now a repository and a submodule of this one
+Shipping @acme/charts@0.3.0
+Tagged v0.3.0, so sync can track it
+origin is https://github.com/acme/charts.git
+
+Push it before anyone else clones this:
+    git -C packages/charts push -u origin main --tags
+Then commit the new submodule here.
+```
+
+## What it does
+
+1. `git init` in the directory, unless it is already a repository
+2. Commits whatever is there, so the submodule has something to point at
+3. Sets `origin` to the url
+4. Tags the version its `package.json` declares, when that parses as semver
+5. Untracks the files in the distribution, then adds the path as a submodule
+
+Step 5 clones nothing: `git submodule add` adopts a repository already at the
+path. So this works before the remote exists, which is the point.
+
+## Afterwards
+
+Push it. Until you do the submodule points at a remote nobody else can fetch.
+Then commit the new submodule pointer.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--url <git-url>` | required; where the repository will live |
+| `--ssh` | record the url as given rather than [rewriting it](/overview/urls) |
+| `--no-tag` | do not tag, for a module not ready to claim a version |
+
+It refuses a path that is already a submodule, is not a directory, or is outside
+the repository. An existing repository at the path keeps its history.
+
+## A note on signing
+
+This is the only command that commits, so it is the only one that will ask your
+GPG agent if you have `commit.gpgsign` set. That is correct: it is your module's
+first commit.

@@ -1,0 +1,42 @@
+{
+  "name": "@fairgarden/distribution",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Compose versioned modules into a distribution, and extend one distribution from another",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "fg-dist": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch --preserveWatchOutput",
+    "lint": "eslint",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.9",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "@babel/types": "^8.0.6",
+    "@types/node": "^26.6.2",
+    "@types/semver": "^7.7.1",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "eslint": "^9.39.5",
+    "typescript": "^6.0.3"
+  },
+  "packageManager": "pnpm@10.28.0+sha512.05df71d1421f21399e053fde567cea34d446fa02c76571441bfc1c7956e98e363088982d940465fd34480d4d90a0668bc12362f8aa88000a64e83d0b0e47be48"
+}

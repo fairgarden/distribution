@@ -1,0 +1,47 @@
+# `add-module`
+
+```bash
+fg-dist add-module <url> [--at <dir>] [--name <mount>] [--ssh]
+```
+
+Adds a module repository as a submodule and wires it into the distribution.
+
+```bash
+fg-dist add-module https://github.com/acme/widget.git
+```
+
+```
+Added apps/widget from https://github.com/acme/widget.git
+Shipping @acme/widget@1.2.0, as the checkout declares it
+Linked through the workspace in apps/monolith/package.json
+Mounted at /widget in apps/monolith/next.config.ts
+
+Run pnpm install and `fg-monolith merge-package-json`.
+```
+
+## What it does
+
+Clones the submodule, then reads the checkout to decide the rest.
+
+**Placement.** A repository with routes is an app and stays at `apps/<name>`;
+one without is a package and is moved to `packages/<name>`. `--at` overrides.
+
+**Linking.** The module is depended on with `workspace:*` — never a version,
+since [the submodule is the pin](/overview/versioning#where-a-version-comes-from).
+
+**Mounting.** An app is added to the monolith's Next config. A package is not:
+it is depended on, not served. Neither happens if the distribution has
+[no monolith](/overview/deploying#separate-deployments).
+
+The config is parsed to find the mount map and the entry is spliced into the
+original text, so formatting and comments survive. When it cannot be edited —
+the apps declared somewhere else, say — you get the line to paste rather than a
+failed command that has already added the submodule.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--at <dir>` | where to put it, overriding the app/package decision |
+| `--name <mount>` | mount name, which becomes the URL segment |
+| `--ssh` | record the url as given rather than [rewriting it](/overview/urls) |

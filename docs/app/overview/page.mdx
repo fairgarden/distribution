@@ -1,0 +1,47 @@
+# Overview
+
+A distribution is a repository that ships a set of modules together. The modules
+are git submodules; the distribution is what end users install and upgrade.
+
+## The shape
+
+```
+acme/
+  package.json          the distribution manifest, versioned by date
+  apps/
+    monolith/           optional: one deployment serving every app
+    widget/             a module with routes
+  packages/
+    design/             a module without routes, shared by the apps
+```
+
+Everything under `apps/` and `packages/` is a submodule with its own repository,
+its own history and its own semver tags.
+
+## What the manifest holds
+
+```json
+{
+  "name": "@acme/core",
+  "version": "2024.12.01",
+  "dependencies": { "@fairgarden/core": "2024.06.01" },
+  "distribution": { "extends": "@fairgarden/core" }
+}
+```
+
+A date for the version, and the distribution it extends if it extends one. Note
+what is absent: no module versions. See
+[where a version comes from](/overview/versioning#where-a-version-comes-from).
+
+## What each piece does
+
+- **[Versioning](/overview/versioning)** — dates for users, semver for
+  developers, and why the submodule is the only place a version is written.
+- **[Modules](/overview/modules)** — apps are mounted at a path, packages are
+  depended on, and both are submodules resolved through the pnpm workspace.
+- **[Extending](/overview/extending)** — a distribution may ship another
+  distribution's modules and move ahead of them, never behind.
+- **[Deploying](/overview/deploying)** — a simple distribution deploys as one
+  Next app; a complex one deploys each app separately.
+- **[Growing a module](/overview/growing)** — build it inside the distribution,
+  extract it once it works.

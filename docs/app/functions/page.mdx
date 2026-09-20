@@ -1,0 +1,38 @@
+# Functions
+
+Everything the [CLI](/commands) does is available programmatically, for a build
+script or a test that would rather assert than parse output.
+
+```ts
+import { inspectExtends, submodules } from '@fairgarden/distribution'
+```
+
+## Distributions
+
+- [`readDistribution`](/functions/readDistribution) — what a distribution ships
+- [`inspectExtends`](/functions/inspectExtends) — how it stands against its parent
+- [`findFloorViolations`](/functions/findFloorViolations) — compare two directly
+
+`assertExtends(root)` throws on a violation, and `describeViolations(report)`
+formats one for a human.
+
+## Submodules
+
+- [`submodules`](/functions/submodules) — the modules a repository ships
+- [`inspect`](/functions/inspect) — one module's version and what is newer
+- [`target`](/functions/target) — the version a bump would move to
+
+`moveTo(submodule, tag)` moves a checkout, `setUrl(root, submodule, url)`
+records a different url, and `isPublic(url)` asks whether a remote can be read
+without credentials.
+
+## Scaffolding and git
+
+`distributionRepo`, `monolithRepo` and `moduleRepo` return the files a
+[`init`](/commands/init) writes, as a map of path to contents; `write(root,
+files)` writes them. `addModule` and `extractModule` are the
+[`add-module`](/commands/add-module) and [`extract`](/commands/extract)
+commands.
+
+`toHttps(url)` and `isSsh(url)` are the [url rewriting](/overview/urls), and
+`addMount(source, mount, module)` is the Next config edit.

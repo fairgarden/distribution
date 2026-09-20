@@ -1,0 +1,47 @@
+# Modules
+
+A distribution is apps and the packages they share. Both are submodules; what
+differs is whether they have routes.
+
+## Apps and packages
+
+[`add-module`](/commands/add-module) reads the checkout to tell them apart.
+
+| | has routes | placed at | mounted |
+| --- | --- | --- | --- |
+| app | yes | `apps/<name>` | at `/<name>` |
+| package | no | `packages/<name>` | not mounted |
+
+```
+Added packages/design from https://github.com/acme/design.git
+Shipping @acme/design@1.4.0, as the checkout declares it
+Linked through the workspace in apps/monolith/package.json
+It has no routes, so it is a package the apps depend on rather than one to mount.
+```
+
+A package is depended on, not served. Mounting one would give Next a route tree
+with no routes in it.
+
+## How they resolve
+
+pnpm links every submodule into the workspace, so an app importing
+`@acme/design` gets the checkout sitting next to it. That is what makes the
+submodule commit the only pin: there is no published copy to disagree with.
+
+An app that depends on a package should declare it as a `peerDependency`, so the
+workspace supplies it and the app carries no version of its own.
+
+## Modules that are not JavaScript
+
+A module need not be a JS project. Give it a `package.json` so the workspace
+sees it and its build is described in one place, and do not publish it to npm.
+It is still a submodule, and still versioned by its own tags.
+
+## Public and private
+
+A private distribution may ship some public modules and some private ones, and a
+private module may extend a public one.
+
+Forking a whole project to change one part of it is not necessary. Make your own
+distribution, reuse the modules you want, and replace the one you do not with
+your own fork — see [Extending](/overview/extending).

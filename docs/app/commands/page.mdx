@@ -1,0 +1,31 @@
+# Commands
+
+```bash
+pnpm add -D @fairgarden/distribution   # provides fg-dist
+```
+
+Or run without installing: `pnpx @fairgarden/distribution <command>`.
+
+## Setting up
+
+- [`init`](/commands/init) — scaffold a distribution, monolith or module repository
+- [`add-module`](/commands/add-module) — add a module repository as a submodule
+- [`extract`](/commands/extract) — turn a directory here into its own repository
+
+## Keeping it current
+
+- [`sync`](/commands/sync) — what has moved, and whether the floor holds
+- [`bump`](/commands/bump) — take the newest version of each module
+- [`check`](/commands/check) — fail when this ships older than what it extends
+- [`use-https`](/commands/use-https) — rewrite ssh submodule urls
+
+## Shared options
+
+| Option | Meaning |
+| --- | --- |
+| `--cwd <dir>` | repository to act on, default the working directory |
+| `--dry-run` | report what would change without changing it |
+| `--no-fetch` | use the refs already fetched, for offline or CI |
+
+Mounting apps into one Next deployment is `fg-monolith`, in
+`@fairgarden/monolith`.

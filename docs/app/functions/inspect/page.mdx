@@ -1,0 +1,41 @@
+# `inspect`
+
+```ts
+inspect(submodule: Submodule, options?: { fetch?: boolean }): SubmoduleState
+```
+
+Compares one module's pinned commit against the versions its repository has.
+This is what [`sync`](/commands/sync) prints.
+
+```ts
+const state = inspect(module, { fetch: false })
+// { current: 'v1.0.0', available: ['v2.0.0', 'v1.1.0', 'v1.0.1'],
+//   upgrades: { patch: 'v1.0.1', minor: 'v1.1.0', major: 'v2.0.0' }, … }
+```
+
+## Returns
+
+| Field | |
+| --- | --- |
+| `head` | the commit checked out right now, which a bump changes |
+| `current` | the version pinned, when a tag names it |
+| `exact` | whether that tag is the commit rather than an ancestor of it |
+| `available` | newer version tags, newest first |
+| `upgrades` | the newest upgrade of each kind |
+| `untagged` | commits on the tracked branch no version tag covers |
+| `dirty` | uncommitted changes, which make moving the pin unsafe |
+| `fetched` | whether the remote was reachable, when a fetch was attempted |
+
+`current` falls back to the newest tag the pinned commit descends from, and
+`exact` says which of the two you got.
+
+Only tags that parse as semver count. `untagged` counts what is past them but
+never becomes an upgrade: a commit makes no statement about what changed.
+
+## Fetching
+
+Fetches by default, so the comparison is against what the remote has. Pass
+`{ fetch: false }` offline or in a shallow CI clone; `fetched` then comes back
+`undefined` rather than `false`, since nothing was attempted.
+
+An unreachable remote sets `fetched` to `false` and is not an error.

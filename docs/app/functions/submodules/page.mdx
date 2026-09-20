@@ -1,0 +1,35 @@
+# `submodules`
+
+```ts
+submodules(root: string): Submodule[]
+```
+
+The modules a repository ships, as `.gitmodules` records them.
+
+```ts
+submodules('/repos/acme')
+// [{ name: 'widget', configName: 'apps/widget', relativePath: 'apps/widget',
+//    path: '/repos/acme/apps/widget', url: 'https://…/widget.git', pinned: '4d946e0…' }]
+```
+
+## Returns
+
+| Field | |
+| --- | --- |
+| `name` | last path segment, which is what you name on the command line |
+| `configName` | the section name in `.gitmodules`, which config reads and writes |
+| `relativePath` | path as recorded, relative to the repository |
+| `path` | absolute path |
+| `url` | the url recorded in `.gitmodules` |
+| `pinned` | the commit checked out when this was read |
+
+`name` and `configName` usually differ: a submodule at `apps/widget` is named
+`widget` on the command line and `apps/widget` in config.
+
+An uninitialised submodule is left out — there is nothing to inspect until it is
+checked out.
+
+## Related
+
+`repositoryRoot(from)` finds the repository holding a directory, which is not
+the same as the monolith directory. Pass its result here.

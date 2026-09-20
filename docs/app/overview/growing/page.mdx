@@ -1,0 +1,41 @@
+# Growing a module in place
+
+A new app or package is easier to get working inside the distribution, where the
+workspace already resolves it and there is one repository to run. It only wants
+its own history once it works.
+
+```bash
+fg-dist extract packages/charts --url https://github.com/acme/charts.git
+```
+
+```
+packages/charts is now a repository and a submodule of this one
+Shipping @acme/charts@0.3.0
+Tagged v0.3.0, so sync can track it
+origin is https://github.com/acme/charts.git
+
+Push it before anyone else clones this:
+    git -C packages/charts push -u origin main --tags
+Then commit the new submodule here.
+```
+
+## What happens
+
+The directory becomes a repository, its contents are committed, its manifest
+version becomes its first tag, and the distribution picks it straight back up as
+a submodule.
+
+**Nothing is re-cloned and nothing moves on disk.** `git submodule add` adopts a
+repository that is already at the path rather than fetching one, so this works
+before the remote exists — which is the point, since you will not have created
+it yet.
+
+## Afterwards
+
+Push it. Until you do, the submodule points at a remote nobody else can fetch:
+your own clone is fine and everyone else's is broken. Then commit the new
+submodule pointer in the distribution.
+
+An existing repository at the path is kept, history and all. An SSH url is
+[rewritten to https](/overview/urls) like everywhere else, and `--no-tag` skips
+the tag — take that if the module is not ready to claim a version.

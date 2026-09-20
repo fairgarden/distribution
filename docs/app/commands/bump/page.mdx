@@ -1,0 +1,44 @@
+# `bump`
+
+```bash
+fg-dist bump [name...] [--major] [--dry-run] [--no-fetch]
+```
+
+Moves each module to its newest version.
+
+```bash
+fg-dist bump                 # newest patch or minor
+fg-dist bump --major         # include majors
+fg-dist bump id design       # only these
+fg-dist bump --dry-run       # report without moving
+```
+
+```
+apps/widget  v1.0.0 -> v1.1.0
+packages/design  v0.3.0 -> v0.3.1
+
+Submodule pointers moved. Commit them to record the new versions.
+```
+
+Majors are held back unless asked for: they are the ones that need someone to
+read a changelog first.
+
+## What it touches
+
+The submodule checkout, and nothing else. No `package.json` is rewritten — pnpm
+stays in charge of resolution, and
+[the checkout is the version](/overview/versioning#where-a-version-comes-from).
+Nothing is committed either; the moved pointers are left for you.
+
+Only tags that parse as semver count as an upgrade. Commits past the newest tag
+are never bumped to: a commit makes no statement about what changed, which is
+what a version is for.
+
+## Safety
+
+It refuses to move a submodule with uncommitted changes, rather than fail part
+way through a checkout or discard work. [`sync`](/commands/sync) flags the same
+thing, so you see it first.
+
+An extension will not be moved below what its parent ships — see
+[Extending](/overview/extending).

@@ -1,0 +1,48 @@
+# Submodule urls
+
+`.gitmodules` is committed, so whatever url is recorded in it is what every
+later clone uses — including a build host that has no SSH key.
+
+Vercel clones submodules over HTTPS and only public ones, so an `scp`-style or
+`ssh://` url checks out fine on a developer's machine and then fails in the
+build.
+
+## Rewriting
+
+[`add-module`](/commands/add-module), [`extract`](/commands/extract) and
+`init --url` all rewrite SSH urls to HTTPS, and say so:
+
+```
+Added apps/widget from https://github.com/acme/widget.git
+(rewritten from git@github.com:acme/widget.git; a submodule is cloned without an SSH key)
+```
+
+`git@host:owner/repo.git` and `ssh://git@host:22/owner/repo.git` both become
+`https://host/owner/repo.git`. Urls that already speak HTTP are left alone, and
+so are local paths, which have no host to rewrite.
+
+`--ssh` records the url as given. Reach for it only when nothing but a
+developer's machine will ever clone the submodule.
+
+## Fixing an existing repository
+
+[`fg-dist use-https`](/commands/use-https) rewrites them all at once, and
+[`sync`](/commands/sync) reports any that remain.
+
+## Https is not enough
+
+A build host has no credentials at all, so the repository also has to be
+readable anonymously — which means public. `use-https` checks exactly that
+afterwards and fails when any cannot be read:
+
+```
+Checking whether each can be cloned without credentials:
+  apps/id  public
+  apps/members  not readable
+
+1 of these cannot be read anonymously, so a build host still cannot clone them.
+```
+
+A module that has to stay private can be shipped as a private npm package
+instead, which installs with a token — a credential a build host can be given.
+`withMonolith` falls back to the package when the checkout is empty.

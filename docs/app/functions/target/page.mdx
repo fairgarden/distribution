@@ -1,0 +1,31 @@
+# `target`
+
+```ts
+target(state: SubmoduleState, options?: { major?: boolean }): string | undefined
+```
+
+The version a [bump](/commands/bump) would move to, or `undefined` when there is
+nothing to do.
+
+```ts
+target(state)                  // 'v1.1.0'  — newest patch or minor
+target(state, { major: true }) // 'v2.0.0'  — including majors
+```
+
+## Why majors are held back
+
+They are the ones that need someone to read a changelog first. A bump that
+quietly crossed a major boundary would be a bump you could not trust to run
+unattended.
+
+So `target` returns the newest of the patch and minor upgrades by default, and
+includes the major only when asked.
+
+## Returns
+
+The newest candidate, or `undefined` when the module is current, has no version
+tags, or has only a major available and `major` was not passed.
+
+That last case is worth distinguishing: `target(state)` returning `undefined`
+while `target(state, { major: true })` returns a version is how
+[`sync`](/commands/sync) knows to mention `--major`.

@@ -1,0 +1,38 @@
+# `check`
+
+```bash
+fg-dist check
+```
+
+Fails when the distribution ships anything older than the one it extends. Run it
+in CI.
+
+```
+@acme/core extends @fairgarden/core, so it cannot ship anything older:
+  @fg/id 1.1.0 is older than the 1.2.3 @fairgarden/core ships
+An extension may move ahead of what it extends, never behind it.
+```
+
+```
+@acme/core@2024.12.01 ships nothing older than @fairgarden/core@2024.06.01.
+```
+
+## Exit codes
+
+| | |
+| --- | --- |
+| `0` | nothing is behind, or this distribution extends nothing |
+| `1` | something is behind, or the parent is declared but not installed |
+
+A declared parent that is not installed fails rather than passing quietly —
+otherwise a missing install would look like a clean check.
+
+## Why a separate command
+
+Where a distribution has a monolith, `withMonolith` already refuses to build on
+a violation. A distribution whose apps
+[deploy separately](/overview/deploying) has no such build, so this is what
+enforces the floor there.
+
+[`sync`](/commands/sync) reports the same thing alongside everything else;
+`check` is the one that exits non-zero.

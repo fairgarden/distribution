@@ -1,0 +1,60 @@
+# Versioning
+
+Two audiences want different things from a version number, so a distribution
+gives them different ones.
+
+## Dates for end users
+
+End users want to know their copy is current. `2023.12.01` against a latest of
+`2024.12.01` says a year has passed, immediately. `1.1.1` against `1.2.1` says
+nothing about time, and secure software needs regular updates — so bumping
+should be obviously overdue when it is.
+
+A distribution is therefore versioned by the date it was released.
+
+## Semver for developers
+
+Developers consuming a module want to know how much work an upgrade is. `1.2.3`
+to `1.2.4` is nothing; `2.0.0` is a morning. So modules are versioned by semver
+and tagged in their own repositories.
+
+Tags go on the module, not the distribution. A monorepo that tags every package
+fills its history with noise; here each module has its own repository, so its
+tags are its own.
+
+## Where a version comes from
+
+The submodule commit is the pin. The version is whatever the `package.json`
+inside that checkout says. Nothing in the distribution repository restates it.
+
+pnpm links the checkout into the workspace, so that is also the version
+everything resolves against — an app depending on a package gets the checkout,
+not a published copy. Modules are depended on with `workspace:*`, which names no
+version at all.
+
+A repository that also wrote `"@acme/design": "1.4.0"` somewhere would be
+carrying a second copy of the same fact, free to drift from the first.
+
+[`fg-dist sync`](/commands/sync) reports the version it reads out of each
+checkout:
+
+```
+apps/widget      v1.2.0  -> v1.3.0 (minor)
+packages/design  v1.4.0  up to date
+```
+
+## Published distributions
+
+A published distribution has no submodules, so its manifest carries the versions
+it shipped. That is what an [extension](/overview/extending) is compared
+against, and the only place versions are written down.
+
+## Maintenance branches
+
+A mature distribution has users slow to take major upgrades, which is what an
+LTS branch is for — `lts-2024`, tagged `2024.01-lts` and so on. How often to cut
+one is a trade between maintaining branches and forcing upgrades.
+
+Modules do not get LTS releases. A module that changes often enough gets
+maintenance branches by patch version instead: `1.2.x` while `1.2` is current,
+`1.1.x` behind it. Those only matter when an LTS distribution depends on them.

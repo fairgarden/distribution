@@ -1,0 +1,41 @@
+# `readDistribution`
+
+```ts
+readDistribution(root: string): Distribution
+```
+
+Reads what a distribution ships.
+
+```ts
+readDistribution('/repos/acme')
+// {
+//   name: '@acme/core',
+//   version: '2024.12.01',
+//   modules: { '@fg/id': '1.4.0', '@fg/design': '1.5.6' },
+//   extends: '@fairgarden/core',
+// }
+```
+
+## Where modules come from
+
+**In a repository**, from the submodules: each one's `package.json` name and
+version. The submodule commit is the pin and the checkout is the version, so
+nothing in the manifest is consulted.
+
+**In a published distribution** there are no submodules, so the manifest's
+`dependencies` are used instead — those are the versions it shipped, which is
+what an [extension](/overview/extending) is compared against.
+
+Either way the parent is excluded, and so is anything depended on with
+`workspace:` or `link:`, since those name no version.
+
+## Returns
+
+| Field | |
+| --- | --- |
+| `name` | from `package.json`, falling back to the directory name |
+| `version` | the date-based version |
+| `modules` | module name to version |
+| `extends` | from `distribution.extends`, when set |
+
+A submodule that was never cloned has nothing to read and is left out.

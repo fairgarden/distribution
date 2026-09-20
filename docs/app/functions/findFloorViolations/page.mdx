@@ -1,0 +1,36 @@
+# `findFloorViolations`
+
+```ts
+findFloorViolations(ours: Distribution, parent: Distribution): FloorViolation[]
+```
+
+Modules a distribution ships older than its parent, or not at all. The
+comparison behind [`inspectExtends`](/functions/inspectExtends), taking both
+sides directly.
+
+```ts
+findFloorViolations(
+  { name: 'ours', version: '2024.12.01', modules: { '@fg/id': '1.1.0' }, extends: undefined },
+  { name: 'parent', version: '2024.06.01', modules: { '@fg/id': '1.2.3' }, extends: undefined }
+)
+// [{ module: '@fg/id', parent: '1.2.3', ours: '1.1.0', reason: 'behind' }]
+```
+
+## How versions compare
+
+By the **oldest version the range allows**, since that is the oldest thing the
+distribution could resolve to. `^1.1.0` against a parent's `^1.2.0` is a
+violation even though both could resolve to the same version.
+
+An exact version compares as itself. Anything unparseable is left alone rather
+than guessed at.
+
+## Reasons
+
+| `reason` | |
+| --- | --- |
+| `behind` | shipped, but older than the parent's |
+| `missing` | the parent ships it and this does not |
+
+Modules the parent does not ship are ignored — an extension is free to add
+whatever it likes.

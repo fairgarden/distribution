@@ -1,0 +1,51 @@
+# `sync`
+
+```bash
+fg-dist sync [name...] [--no-fetch]
+```
+
+Reports where each module stands.
+
+```
+apps/widget      v1.0.0  -> v1.0.1 (patch), v1.1.0 (minor), v2.0.0 (major)
+packages/design  v0.3.0  -> v0.3.1 (patch)
+apps/legacy      untagged  no version tags
+
+2 module(s) have newer versions. Run `fg-dist bump` to take them, or
+`fg-dist bump --major` to include the 1 major upgrade(s).
+```
+
+Each line is a submodule: the version it is pinned at, the newest upgrade of
+each kind available, and anything else worth knowing — untagged commits past
+the newest tag, uncommitted changes, a remote that could not be reached, or an
+[ssh url](/overview/urls).
+
+A version shown as `v1.0.0+` means the pin is a descendant of that tag rather
+than the tag itself.
+
+## What it also checks
+
+**The [extension floor](/overview/extending)**, when the distribution extends
+another. A module older than the parent ships is reported here as well as by
+[`check`](/commands/check).
+
+**Submodule urls**, listing any recorded over ssh with the https form to
+replace them with.
+
+## Where versions come from
+
+The tags in each module's repository, and the pin is the submodule commit.
+Nothing in the distribution repository is consulted — see
+[Versioning](/overview/versioning#where-a-version-comes-from).
+
+Commits past the newest tag are counted and shown but never bumped to. A module
+with no tags at all is listed and left alone.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `[name...]` | only these modules, by name or path |
+| `--no-fetch` | use the refs already present, for offline or a shallow CI clone |
+
+An unreachable remote is reported on the line rather than being fatal.

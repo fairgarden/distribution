@@ -1,0 +1,57 @@
+# Extending
+
+A distribution may extend another. The extension ships the parent's modules and
+may move ahead of them, but can never ship anything older — otherwise "extends"
+would mean shipping a regression.
+
+```json
+{
+  "name": "@acme/core",
+  "version": "2024.12.01",
+  "dependencies": { "@fairgarden/core": "2024.06.01" },
+  "distribution": { "extends": "@fairgarden/core" }
+}
+```
+
+The parent is an ordinary dependency, so whatever version is installed is the
+one being extended.
+
+## The floor
+
+| Module | parent ships | extension ships | |
+| --- | --- | --- | --- |
+| `@fg/id` | `1.2.3` | `1.4.0` | ahead, fine |
+| `@fg/design` | `1.5.6` | `1.5.6` | matching, fine |
+| `@fg/membership` | `1.0.0` | `0.9.0` | behind, refused |
+
+Dropping an inherited module is refused too. Ranges are compared by the oldest
+version they allow, since that is the oldest thing the distribution could
+resolve to — `^1.1.0` under a parent's `^1.2.0` is a violation.
+
+What the extension ships comes from its submodule checkouts; what the parent
+ships comes from its published manifest.
+
+## What enforces it
+
+- [`fg-dist check`](/commands/check) fails, which is what to run in CI.
+- [`fg-dist sync`](/commands/sync) reports it alongside available upgrades.
+- `withMonolith` refuses to build, where the distribution has a monolith.
+
+```
+@acme/core extends @fairgarden/core, so it cannot ship anything older:
+  @fg/id 1.1.0 is older than the 1.2.3 @fairgarden/core ships
+An extension may move ahead of what it extends, never behind it.
+```
+
+A distribution whose apps [deploy separately](/overview/deploying) has no
+monolith build to fail, so `check` is the one that matters there.
+
+## What it is for
+
+**A stricter license on top of a permissive base.** The proprietary
+distribution extends the MIT one, reuses its modules, and adds or replaces the
+few it needs. The shared modules stay shared rather than forked.
+
+**Someone else's distribution on top of yours.** A user keeps their own `core`
+repository extending the published one, taking upgrades as they come and
+staying ahead where they need to be.

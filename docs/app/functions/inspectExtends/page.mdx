@@ -1,0 +1,39 @@
+# `inspectExtends`
+
+```ts
+inspectExtends(root: string): ExtendsReport
+```
+
+How a distribution stands against the one it extends.
+
+```ts
+const report = inspectExtends('/repos/acme')
+if (report.violations.length > 0) {
+  console.error(describeViolations(report))
+}
+```
+
+## Returns
+
+| Field | |
+| --- | --- |
+| `distribution` | what this ships, from [`readDistribution`](/functions/readDistribution) |
+| `parent` | what it extends, read from `node_modules` |
+| `violations` | modules shipped older than the parent, or not at all |
+| `unresolved` | set when a parent is declared but could not be read |
+
+A distribution that extends nothing comes back with no parent and no
+violations, which is not a failure.
+
+`unresolved` is worth handling separately: a parent that is declared but not
+installed means nothing could be compared, which is different from comparing
+and finding nothing wrong. [`check`](/commands/check) treats it as a failure
+for that reason.
+
+## Related
+
+`assertExtends(root)` throws when there are violations, which is what
+`withMonolith` calls. `describeViolations(report)` formats them.
+
+For comparing two distributions you already have, use
+[`findFloorViolations`](/functions/findFloorViolations).
