@@ -1,0 +1,39 @@
+# Running a distribution
+
+```bash
+pnpm dev            # the monolith, plus the packages it builds from
+pnpm dev-services   # every app on its own, no monolith
+```
+
+## With a monolith
+
+`dev` runs the monolith and the packages — not the mounted apps. The monolith
+already serves their routes, so running their dev servers as well would be the
+same routes twice, on different ports.
+
+## Every app on its own
+
+`dev-services` is the other shape. It runs each app's own dev server and not the
+monolith, which is what you want to work on one app in isolation, and the only
+shape available to a distribution [too complex to serve from one
+deployment](/overview/deploying#separate-deployments).
+
+A `--separate` distribution has no monolith, so its `dev` *is* `dev-services`.
+
+## Stable hostnames instead of ports
+
+Several dev servers at once means several ports to remember, and a collision
+whenever two default to the same one. Each app therefore runs through
+[portless](https://portless.sh), which gives it a name:
+
+```
+@acme/widget:dev:service: > portless widget next dev
+                          -> https://widget.localhost
+```
+
+A scaffolded module gets a `dev:service` script and `portless` as a
+devDependency. Its plain `dev` stays `next dev`, so nothing depends on portless
+unless you run the services mode.
+
+The hostname is the package name without its scope, so `@acme/widget` becomes
+`widget.localhost`.

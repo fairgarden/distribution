@@ -31,11 +31,21 @@ submodule commit the only pin: there is no published copy to disagree with.
 An app that depends on a package should declare it as a `peerDependency`, so the
 workspace supplies it and the app carries no version of its own.
 
+## Build scripts
+
+A module's build belongs in its own `package.json`, or in a `scripts` directory
+when it is too long for one line. That way it is versioned with the module and
+there is one place to look. Scripts that drive CLI tools are easier to write and
+read with [zx](https://github.com/google/zx) than in bash.
+
 ## Modules that are not JavaScript
 
 A module need not be a JS project. Give it a `package.json` so the workspace
 sees it and its build is described in one place, and do not publish it to npm.
 It is still a submodule, and still versioned by its own tags.
+
+Describing the build there is what keeps the development environment uniform: a
+module in another language is still built by the same command as the rest.
 
 ## Public and private
 
