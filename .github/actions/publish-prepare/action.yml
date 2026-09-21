@@ -1,0 +1,42 @@
+name: Prepare for publishing
+description: Install dependencies and build, so the package is ready to publish.
+
+# Kept as an action rather than repeated steps: npm trusted publishing pins one
+# workflow file per package, so the canary and release jobs both have to share
+# this.
+
+runs:
+  using: composite
+  steps:
+    # Pin these to a commit sha once Renovate is watching the repository. The
+    # checkout in the workflow is pinned already, because it handles credentials.
+    #
+    # No `version` here: the `packageManager` field in package.json is what
+    # pins pnpm, and giving both makes this action refuse to choose.
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        # Inline rather than `node-version-file`, so this action works in a
+        # repository that has no `.nvmrc`.
+        node-version: 22
+        # No `cache: pnpm`: it needs a lockfile to hash, and a module developed
+        # inside a distribution keeps its lockfile in the distribution.
+        registry-url: https://registry.npmjs.org
+
+    - name: Install
+      shell: bash
+      run: |
+        if [ -f pnpm-lock.yaml ]; then
+          pnpm install --frozen-lockfile
+        else
+          # A module developed inside a distribution has no lockfile of its
+          # own; the distribution's workspace holds it.
+          pnpm install --no-frozen-lockfile
+        fi
+
+    - name: Build
+      shell: bash
+      # A module that is consumed as source has nothing to build; one that ships
+      # a `dist` does. Neither should have to edit this file.
+      run: pnpm run --if-present build

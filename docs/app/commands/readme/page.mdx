@@ -1,0 +1,137 @@
+# `readme`
+
+```bash
+fg-dist readme [--check]
+```
+
+Writes the module versions into the readmes, so they are visible where people
+actually look.
+
+It does different work depending on where it runs: in a distribution it records
+what that distribution ships, and in a module it records that module's own
+version.
+
+## Why
+
+Browsing a distribution on GitHub shows a submodule as a commit hash and nothing
+else. The version a module is pinned at — the thing anyone wants to know — is
+invisible exactly there. Writing it into the readmes puts it back.
+
+The distribution's readme gets what it ships, and what each module is actually
+pinned at:
+
+```md
+| Module | Version | Pinned at | Path |
+| --- | --- | --- | --- |
+| `@acme/widget` | 1.2.0 | [v1.2.0](…/tree/v1.2.0) | `apps/widget` |
+| `@acme/design` | 0.4.1 | [4d1b9d8](…/commit/4d1b9d8) — unreleased, after v0.4.1 | `packages/design` |
+| `@acme/tools` | 0.1.0 | [7137657](…/commit/7137657) — untagged | `apps/tools` |
+```
+
+## Pinned at a tag, or past one
+
+A submodule pin is a commit, and a commit may or may not be a release. The
+three cases read differently on purpose:
+
+- **At a tag** — the pin is a released version, and links to the tag.
+- **Past a tag** — the pin is a commit after the last release, so the version
+  in the manifest is *not* what is being shipped. It links to the commit and
+  says which release it is ahead of.
+- **Never tagged** — the module has no releases at all.
+
+A note explaining the second case is added underneath, and only when something
+is actually unreleased.
+
+Addresses come from the submodule's own remote, rewritten to https so they are
+browsable. A remote with no web address — a local path — is shown without a
+link rather than with a broken one.
+
+And each module's own readme states its version at the top:
+
+```md
+# @acme/widget
+
+Version **1.2.0**
+```
+
+Under it, the same readme gets the module's release flow — the *Publish*
+workflow, `pnpm release`, where a fix to an older minor goes — with that
+module's own version and branch names filled in. The words are the same in
+every module, so "how do I release this" is answered where someone is already
+standing.
+
+A block is only positioned when it is first inserted: the release block goes
+under the version block, and the version block under the first heading. Moving
+one afterwards is left alone, since rearranging somebody's readme is not this
+command's business.
+
+It names no distribution. The same module is shipped in several — that is what
+[extending](/overview/extending) one is for — so naming one would be a claim
+the module cannot make. The relationship lives in the distribution's readme,
+which is the side that knows it.
+
+Versions come from the checkouts, the same as everywhere else — see
+[Versioning](/overview/versioning#where-a-version-comes-from).
+
+## In a module, on its own release
+
+Run inside a module — a repository with no submodules — it records that
+module's version from its own `package.json` and nothing else:
+
+```md
+# @acme/widget
+
+Version **2.1.0**
+```
+
+No table, because a module ships nothing. This is what keeps a module's release
+flow its own: bump the version, run `fg-dist readme`, tag, publish. The
+distribution finds out when someone [bumps](/commands/bump) the submodule, which
+may be much later or never.
+
+[`release`](/commands/release) runs this on both branches it creates, so this is
+usually only run by hand between releases.
+
+```bash
+npm version minor
+fg-dist readme          # the readme follows the manifest
+git commit -am "Release" && git tag "v$(node -p "require('./package.json').version")"
+```
+
+## How the file is edited
+
+Each block is delimited by a pair of comments:
+
+```md
+<!-- fg:version -->
+
+Version **1.2.0**
+
+<!-- /fg:version -->
+```
+
+The markdown is parsed to find that pair, and the new text is spliced into the
+original between them. Everything around it keeps its wording and formatting,
+and a mention of the marker inside a code span is not mistaken for the block
+itself.
+
+A readme with no block yet gets one after its first heading, which is where
+someone looking for a version looks first. A module with no readme at all gets
+one — the point is that the version is visible.
+
+Running it again when nothing has moved rewrites nothing.
+
+## In CI
+
+```bash
+fg-dist readme --check
+```
+
+Exits non-zero and names the readmes that no longer match, without writing
+anything. Works in either kind of repository, so a module's own CI can check it
+as readily as a distribution's. Pair it with [`bump`](/commands/bump), which moves the pins that make
+them stale.
+
+Run it *after* `bump`, not before: writing into a module's readme leaves that
+submodule dirty, and `bump` refuses to move a submodule with uncommitted
+changes. Bump, commit, then record.

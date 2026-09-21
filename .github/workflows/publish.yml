@@ -1,0 +1,132 @@
+name: Publish
+
+# npm trusted publishing is configured against one workflow file per package,
+# so canary and release both live here. There is no npm token: the package must
+# already exist on npm with a trusted publisher pointing at this repository and
+# this file. Bootstrap a new package by publishing it once from a workstation,
+# then configure trusted publishing on npmjs.com.
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+  workflow_dispatch:
+    inputs:
+      dist-tag:
+        description: 'npm dist tag to publish the release to'
+        required: false
+        type: string
+        default: 'latest'
+      dry-run:
+        description: 'Pack and validate without publishing'
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Publish canary
+    # Lockfile bumps do not warrant a canary.
+    if: >
+      github.event_name == 'schedule'
+      || (github.event_name == 'push' && github.event.head_commit.author.name != 'renovate[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for provenance and trusted publishing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Prepare for publishing
+        uses: ./.github/actions/publish-prepare
+
+      - name: Stamp the canary version
+        id: canary
+        # `fg-dist canary` works out the version and whether there is anything
+        # to publish: a canary records the commit it was built from, so a
+        # nightly run with nothing new is a no-op rather than a version bump.
+        run: pnpm run canary
+
+      - name: Publish to npm
+        if: steps.canary.outputs.skip != 'true'
+        # Provenance only where npm will generate it: it refuses for anything
+        # not published publicly, and refusing is a failed publish.
+        run: |
+          if [ "${{ steps.canary.outputs.provenance }}" = "true" ]; then
+            npm publish --tag canary --provenance
+          else
+            npm publish --tag canary
+          fi
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.canary.outputs.skip }}" = "true" ]; then
+            echo "\`${{ steps.canary.outputs.version }}\` is already the canary for this commit." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Published \`@fairgarden/distribution@${{ steps.canary.outputs.version }}\` to the \`canary\` tag." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    name: Publish release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required for pushing the tag and creating the release
+      id-token: write # Required for provenance and trusted publishing
+    environment:
+      name: npm-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0 # `gh release create --generate-notes` needs history
+
+      - name: Prepare for publishing
+        uses: ./.github/actions/publish-prepare
+
+      - name: Resolve version
+        id: version
+        # Refuses when the version is already on npm: main is meant to carry the
+        # next unreleased version, so finding it published means `fg-dist
+        # release` has not run since the last one.
+        run: pnpm run release:check
+
+      - name: Publish to npm
+        env:
+          DIST_TAG: ${{ inputs.dist-tag }}
+          # npm refuses provenance for anything not published publicly.
+          PROVENANCE: ${{ steps.version.outputs.provenance }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          flags="--tag $DIST_TAG"
+          [ "$PROVENANCE" = "true" ] && flags="$flags --provenance"
+          [ "$DRY_RUN" = "true" ] && flags="$flags --dry-run"
+          npm publish $flags
+
+      - name: Tag and create the GitHub release
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag
+
+      - name: Summary
+        run: |
+          echo "Published \`@fairgarden/distribution@${{ steps.version.outputs.version }}\` to the \`${{ inputs.dist-tag }}\` tag." >> "$GITHUB_STEP_SUMMARY"

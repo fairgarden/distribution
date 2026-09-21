@@ -19,6 +19,34 @@ const git = (cwd: string, args: string[]): string | undefined => {
 const lines = (value: string | undefined): string[] =>
   value ? value.split('\n').filter(Boolean) : []
 
+/**
+ * Whether this repository ships modules, as opposed to being one.
+ *
+ * Read from `.gitmodules`, which is committed, rather than from
+ * {@link submodules}, which only reports checkouts that are actually there. A
+ * clone made without `--recurse-submodules` has the file and none of the
+ * checkouts, and treating that as a module would write a module's readme over
+ * the distribution's and let it be released as if it were one.
+ */
+export const isDistribution = (root: string): boolean =>
+  existsSync(path.join(root, '.gitmodules')) &&
+  (git(root, ['config', '--file', '.gitmodules', '--get-regexp', 'path']) ?? '') !== ''
+
+/**
+ * Submodules that are missing their checkout.
+ *
+ * Anything that reads a module's own package.json needs to say so rather than
+ * quietly leave it out.
+ */
+export const uninitialised = (root: string): string[] => {
+  const config = git(root, ['config', '--file', '.gitmodules', '--get-regexp', 'path'])
+
+  return lines(config)
+    .map((line) => line.split(' ')[1])
+    .filter((relativePath): relativePath is string => Boolean(relativePath))
+    .filter((relativePath) => !existsSync(path.join(root, relativePath, '.git')))
+}
+
 /** The repository holding the submodules, which is not the monolith directory. */
 export const repositoryRoot = (from: string): string | undefined =>
   git(from, ['rev-parse', '--show-toplevel'])

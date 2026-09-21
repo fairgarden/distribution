@@ -1,0 +1,75 @@
+# `overrides`
+
+```bash
+fg-dist overrides [--check]
+```
+
+Points the workspace at this distribution's own checkouts, so a module resolves
+its siblings from the tree rather than from the registry.
+
+```yaml
+# fg:overrides
+overrides:
+  "@acme/design": "workspace:*"
+  "@acme/id": "workspace:*"
+# fg:overrides:end
+```
+
+Names, not versions. The version still comes from the submodule pin, which is
+[the whole point of pinning it there](/overview/versioning#where-a-version-comes-from).
+
+## The problem it solves
+
+An app declares an honest range for the sibling it needs:
+
+```json
+{ "peerDependencies": { "@acme/design": "^1.2.0" } }
+```
+
+With `linkWorkspacePackages` on, pnpm links the checkout — *while the checkout
+still satisfies that range*. [Bump](/commands/bump) `design` to `2.0.0` and it
+no longer does, so pnpm resolves it from the registry instead: the app quietly
+builds against the last published `1.x` while a `2.0.0` checkout sits next to
+it. Nothing fails. The range was never wrong, and the app was never asked.
+
+Widening every range to `*` would fix it and cost the modules their published
+ranges, which are the only thing telling a consumer outside the distribution
+what the app actually needs.
+
+So the distribution says it instead. `workspace:*` means what a distribution
+means: this tree, whatever version it is at. The modules keep ranges that are
+true when published.
+
+## When it runs
+
+[`add-module`](/commands/add-module) and [`extract`](/commands/extract) update
+the block themselves, since both change the set of modules. Run it by hand after
+adding a submodule with plain git, and in CI to catch that:
+
+```bash
+fg-dist overrides --check
+```
+
+The block is delimited by comments and spliced in place, so everything else in
+`pnpm-workspace.yaml` keeps its wording. A distribution with no submodules is
+left alone — an empty block would be noise.
+
+Run `pnpm install` afterwards to take it up.
+
+## Which dependencies this is for
+
+An app that depends on a package the distribution also ships should declare it
+as a `peerDependency` — the distribution supplies it, so the app carries no
+version of its own. Keep a `devDependency` at the same range so the module still
+builds when cloned on its own.
+
+```json
+{
+  "peerDependencies": { "@acme/design": "^1.2.0" },
+  "devDependencies": { "@acme/design": "^1.2.0" }
+}
+```
+
+Inside a distribution both resolve to the checkout. On its own, the
+devDependency installs a published copy — see
+[Two workspaces, one module](/overview/modules#two-workspaces-one-module).

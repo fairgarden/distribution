@@ -1,0 +1,65 @@
+# `prerelease`
+
+```bash
+fg-dist prerelease --major | --minor [--id rc] [--dry-run] [--no-push]
+```
+
+Starts the next line on a branch of its own, and leaves main exactly where it
+is.
+
+```
+  v2  2.0.0-alpha.0  cut from 1.6.0, which main keeps
+```
+
+## What it is for
+
+Main is at `1.6.0` and still has `1.6.x` fixes and a `1.7.0` to ship. `2.0.0`
+needs starting anyway. Moving main to `2.0.0-alpha.0` would strand the line
+people are actually running; waiting until `1.x` is finished means the major
+starts late.
+
+So the major gets a branch, and both go on at once. Main keeps releasing what it
+was releasing, and `v2` publishes under a dist tag of its own until it is ready
+to be `latest`.
+
+This is the opposite of [`release`](/commands/release), which is about main
+*leaving* a line. Nothing here touches main, and there is no pull request —
+this is not a change to the branch you are on, it is a second line starting
+beside it.
+
+## The branch it cuts
+
+| From | Flag | Branch | Version |
+| --- | --- | --- | --- |
+| `1.6.0` | `--major` | `v2` | `2.0.0-alpha.0` |
+| `1.6.0` | `--minor` | `v1-7` | `1.7.0-alpha.0` |
+
+The branch is named for the line it will become, not for the prerelease it
+starts as. If `2.0.0` ships from `v2`, that is already where its fixes go — the
+same name [`release`](/commands/release) would have given it.
+
+`--id` picks the identifier: `--id rc` gives `2.0.0-rc.0`. Moving from one to
+the next is [`release --id`](/commands/release), on the branch.
+
+## Releasing from it
+
+Run the *Publish* workflow from that branch with a dist tag of its own:
+
+```
+dist-tag: next
+```
+
+Never `latest` while main is still the line people should be installing. That
+is the single mistake this arrangement exists to avoid — see
+[Dist-tags](/overview/releasing#dist-tags).
+
+When the line is ready, `2.0.0` ships from `v2` under `latest`, and main is
+brought onto it. That last step is a merge with real decisions in it, so it is
+yours rather than a command's.
+
+## What it refuses
+
+- **Uncommitted changes** — the branch is cut from what is committed.
+- **Branching from a prerelease** — `2.0.0-alpha.0` is already a line that has
+  been started. Move it along with [`release`](/commands/release).
+- **A branch that already exists** — that line is under way; check it out.

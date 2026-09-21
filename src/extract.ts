@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { writeOverrides } from './overrides.ts'
 import semver from 'semver'
 import { repositoryRoot, submodules } from './submodules.ts'
 import { toHttps } from './git-url.ts'
@@ -52,6 +53,8 @@ export interface ExtractOptions {
 }
 
 export interface ExtractResult {
+  /** Why the workspace overrides were not updated, when they could not be. */
+  overridesError: string | undefined
   relativePath: string
   packageName: string | undefined
   version: string | undefined
@@ -124,6 +127,15 @@ export const extractModule = async (
     )
   }
 
+  // Nested packages — a docs site, most often — were members of the
+  // distribution's workspace. Out here nothing says so, and pnpm 10 links
+  // nothing across a workspace unless told to, so this repository needs the
+  // arrangement written down for itself.
+  const nested = await nestedPackages(full)
+  if (nested.length > 0 && !existsSync(path.join(full, 'pnpm-workspace.yaml'))) {
+    await writeFile(path.join(full, 'pnpm-workspace.yaml'), workspaceFile(nested))
+  }
+
   // Commit whatever is there, so the submodule has something to point at.
   if (quiet(full, ['status', '--porcelain']) !== '') {
     git(full, ['add', '-A'])
@@ -152,7 +164,17 @@ export const extractModule = async (
   quiet(root, ['rm', '-r', '--quiet', '--cached', relativePath])
   git(root, ['submodule', 'add', recorded, relativePath])
 
+  // Now that it is a submodule, the distribution resolves it from the tree
+  // rather than through whatever range its dependents declare. The repository
+  // is made and the submodule added by this point, so a workspace this cannot
+  // edit is reported rather than failing a job that is otherwise done.
+  const overridesError = await writeOverrides(root).then(
+    () => undefined,
+    (error: unknown) => (error instanceof Error ? error.message : String(error))
+  )
+
   return {
+    overridesError,
     relativePath,
     packageName: name,
     version,
@@ -162,3 +184,49 @@ export const extractModule = async (
     tagged,
   }
 }
+
+/** Directories one level down that are packages in their own right. */
+const nestedPackages = async (root: string): Promise<string[]> => {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+
+  return entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name !== 'node_modules' &&
+        !entry.name.startsWith('.') &&
+        existsSync(path.join(root, entry.name, 'package.json'))
+    )
+    .map((entry) => entry.name)
+    .sort()
+}
+
+/**
+ * A workspace covering this repository and the packages inside it.
+ *
+ * The settings are not decoration: pnpm 10 defaults `linkWorkspacePackages` to
+ * false, so without it a nested package resolves its dependency on this one
+ * from the registry rather than from the checkout it is sitting in.
+ */
+export const workspaceFile = (nested: string[]): string =>
+  [
+    '# For when this repository is cloned on its own.',
+    '#',
+    '# pnpm uses the nearest workspace file to where it is run, so inside a',
+    '# distribution this one applies to `pnpm install` run from THIS directory —',
+    '# which would build a second workspace with its own lockfile and without the',
+    '# distribution\'s overrides. Install from the distribution root instead.',
+    'packages:',
+    '  # The workspace root — this module — is always a member; these are the',
+    '  # additions.',
+    ...nested.map((name) => `  - ${name}`),
+    '',
+    '# pnpm 10 defaults this to false, so without it the packages above resolve',
+    '# their dependency on this module from the registry instead of from the',
+    '# checkout next to them.',
+    'linkWorkspacePackages: true',
+    '# Keep plain semver ranges in package.json: the range is what a published',
+    '# module is installed by, and what a distribution reads to resolve versions.',
+    'saveWorkspaceProtocol: false',
+    '',
+  ].join('\n')

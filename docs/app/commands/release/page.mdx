@@ -1,0 +1,124 @@
+# `release`
+
+```bash
+fg-dist release --patch | --minor | --major [--dry-run] [--no-push]
+```
+
+Moves a module on from the release it has just published.
+
+Run it in a module, after the [publish workflow](/commands/workflows) has shipped
+the version main is sitting on.
+
+## It will not choose for you
+
+Which way main moves on is a judgement about what changed, so it is asked for.
+Run it with no flag and it prints the three and stops:
+
+```
+Released 1.6.0, tagged v1.6.0
+
+Which way does main move on?
+
+  --patch  1.6.1    stays on this line; nothing branches off
+  --minor  1.7.0    v1-6 keeps 1.6.x
+  --major  2.0.0    v1-6 keeps 1.6.x
+
+Or `fg-dist prerelease --major` to start the next line beside main, without
+moving main off this one.
+```
+
+A **patch** says this branch *is* the line and stays on it — nothing branches
+off, because there is nothing for a branch to be behind. That is what a
+maintenance branch releases: `v1-6` at `1.6.1` releases and takes `1.6.2`.
+
+A **minor** or **major** says main is leaving this line, so something has to
+stay behind to carry its fixes:
+
+```
+Released 1.6.0, tagged v1.6.0
+
+  v1-6           1.6.1  cut from v1.6.0, where 1.6.0 is maintained
+  release/v1.7.0 1.7.0  opened against main
+```
+
+## Why it runs after, not before
+
+Main carries the next unreleased version. It is at `1.6.0` because `1.6.0` is
+what is being worked towards; once that is published, main has to move, and
+`1.6.x` has to continue somewhere that is not main.
+
+So the release is the moment both branches appear — see
+[Releasing a module](/overview/releasing).
+
+The bump to main is a pull request rather than a push, because main's history is
+reviewed like anything else. The maintenance branch is not a proposal, so it is
+just pushed.
+
+## What each branch gets
+
+| Branch | Version | Cut from |
+| --- | --- | --- |
+| `v1-6` | `1.6.1` | the `v1.6.0` tag |
+| `release/v1.7.0` | `1.7.0` | wherever you are |
+
+The maintenance branch is cut from the **tag**, not from main. Main may have
+moved on while the release was being dispatched, and those commits are not part
+of `1.6.x`. If there is no tag — the workflow has not run — it falls back to
+`HEAD` and says so, because that is a guess and you should know it was made.
+
+A patch release does not start a new line: releasing `1.6.1` from `v1-6` opens
+`v1-6` again at `1.6.2`. Rolling to `1.7.0` there would jump the line main is
+already on.
+
+The maintenance branch is the same for `--minor` and `--major` — `v1-6` is
+where `1.6.x` lives regardless of what comes next.
+
+## Prereleases
+
+A prerelease gets no maintenance branch. There is no `2.0.0-alpha.0` that
+someone is still running and needs a fix for, so it only moves forward — and
+because there is only one way to go, no flag is needed:
+
+```bash
+fg-dist release              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
+fg-dist release --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
+fg-dist release --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
+```
+
+`--id` starts a new identifier when the version is not already on it, and counts
+up when it is. To start a prerelease line in the first place, see
+[`prerelease`](/commands/prerelease).
+
+## Both branches record their version
+
+[`readme`](/commands/readme) runs on each branch before the commit, so the
+readme states `1.6.1` on `v1-6` and `1.7.0` on the pull request. Browsing either
+one shows what it is, which is the whole reason that block exists.
+
+## What it refuses
+
+- **Uncommitted changes** — both branches are cut from what is committed, and
+  the bumps are committed on top. Anything in the working tree would be swept in.
+- **Detached HEAD** — it has to know which branch to come back to, and which
+  branch the pull request is against.
+- **A distribution** — a repository with submodules is versioned by date, not
+  semver. Release its modules individually, then [`bump`](/commands/bump).
+- **A branch that already exists** — `v1-6` is not moved onto an existing
+  branch. Delete it, or you are releasing a version that has been released.
+
+## Options
+
+| Option | Effect |
+| --- | --- |
+| `--patch` | stay on this line; nothing branches off |
+| `--minor` | move main to the next minor, leaving this one behind |
+| `--major` | move main to the next major, leaving this one behind |
+| `--id <name>` | prerelease identifier: `alpha`, `beta`, `rc` |
+| `--dry-run` | print the branches and their versions, write nothing |
+| `--no-push` | create the branches locally, push nothing, open no pull request |
+
+The pull request is opened with `gh`. If it is not installed the branches are
+still pushed, and it says so rather than pretending.
+
+However it ends, you are left on the branch you started from, at the version
+main still carries — the bump is on a branch, waiting for review.

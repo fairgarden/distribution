@@ -1,0 +1,142 @@
+# Releasing a module
+
+A distribution is versioned by date, because what it means to a user is *when*.
+A module is versioned by [SemVer](https://semver.org), because what it means to
+a developer is *what broke*. This page is about the second one.
+
+A module's release flow is entirely its own. It publishes to npm on its own
+schedule, tags its own commits, and the distribution finds out only when someone
+[bumps](/commands/bump) the submodule — which may be much later, or never.
+
+## What the version promises
+
+- **Patch** — a fix. Nothing else changed.
+- **Minor** — something was added. Anything written against the previous minor
+  still works.
+- **Major** — something was removed or changed meaning. Written against the
+  previous major, it may not.
+
+Anything below `1.0.0` makes no promise at all, which is the point of `0.x`:
+say so rather than imply stability that is not there.
+
+## Stable and iterative libraries
+
+Not every module wants the same pace, and the version number is where that shows.
+
+A **stable** library treats a major as an event. Breaking changes are collected,
+deprecated in a minor first, and released together. `1.x` runs for a long time.
+A consumer upgrades minors without reading anything.
+
+An **iterative** library majors freely. A breaking change ships as a major when
+it is ready, and `6.0.0` three months after `5.0.0` is not a failure — it is the
+version number doing its job. What it must not do is break inside a minor, which
+is how an iterative library turns into an unpredictable one.
+
+Both are honest. Choosing is a decision about the module's audience, and it
+belongs in the module's own readme so nobody has to infer it from the tags.
+
+## Main carries the next version
+
+The version in `package.json` on main is the one being worked *towards*, not the
+one last published. Main is at `1.7.0` because `1.6.0` is out.
+
+This is what makes [`fg-dist release`](/commands/release) a post-publish step:
+once `1.6.0` is on npm, main moves on and `1.6.x` continues somewhere else.
+
+```
+v1.6.0 tagged, published
+        │
+        ├── v1-6          1.6.1   where fixes to 1.6 go
+        └── main          1.7.0   where the next release is built
+```
+
+## Starting the next line early
+
+A line does not have to wait for the one before it to finish. Main is at
+`1.6.0` with `1.6.x` and `1.7.0` still to ship; `2.0.0` can be started anyway,
+on `v2`:
+
+```
+v1.6.0 published
+        │
+        ├── v1-6          1.6.1        fixes to 1.6
+        ├── main          1.7.0        the next release
+        └── v2            2.0.0-alpha.0  published as `next`
+```
+
+Three lines, three dist tags, and `latest` still means what someone installing
+today should get. [`prerelease`](/commands/prerelease) cuts that branch and
+leaves main alone; when `2.0.0` is ready it ships from `v2` under `latest`, and
+main is brought onto it by hand.
+
+## Maintenance branches
+
+A branch per released minor, named `v1-6` rather than `v1.6` because refs and
+directories are easier to live with without the dot.
+
+It exists so a fix can reach someone who cannot take `1.7.0` yet. Most modules
+never need one: if everybody upgrades, the branch stays untouched and costs
+nothing. Cutting it at release time rather than when the first fix arrives is
+cheap, and means the fix does not start with an argument about where it goes.
+
+A patch goes to main first, then onto the branch — not the other way round. A
+fix that only exists on `v1-6` is a fix that disappears at `1.7.0`.
+
+```bash
+git checkout v1-6
+git cherry-pick <the fix on main>
+# 1.6.1 is already the version on this branch
+git tag v1.6.1 && git push origin v1-6 --tags
+```
+
+Then dispatch the publish workflow from `v1-6` with the dist-tag that line uses
+— `latest` only if `1.6` is still the newest release.
+
+## Dist-tags
+
+`latest` is what `npm install` gives you, and it should be the newest release
+that a new consumer should start on.
+
+`canary` is built from main on every push and every night. It is not a release
+and carries no promise; it exists so that "does main work for me?" can be
+answered without a checkout.
+
+A maintenance release publishes under its own tag — `v1-lts`, say — when it is
+not the newest. Publishing `1.6.1` as `latest` after `1.7.0` is out is the one
+mistake this whole scheme exists to avoid.
+
+## Recording it in the source
+
+The version a thing arrived in is worth writing down where someone will read it:
+
+```ts
+/**
+ * Mount an app inside a monolith.
+ *
+ * @since 1.4.0
+ * @see {@link withMonolithicPortability}
+ */
+```
+
+`@since` on anything exported, so a consumer can tell whether their pinned
+version has it without checking the changelog. `@see` to whatever the reader
+should have read first.
+
+## Versioned documentation
+
+Docs for a module are published per major, at a subdomain — `v1.acme.dev`,
+`v2.acme.dev` — with the bare hostname pointing at the newest. Someone on `1.x`
+reading `2.x` documentation is being actively misled, and a version switcher on
+the page is worth more than a changelog nobody opens.
+
+## The flow, end to end
+
+1. Work lands on main, which is at `1.6.0` and unreleased.
+2. Dispatch the [publish workflow](/commands/workflows) — it checks `1.6.0` is
+   not already on npm, publishes it with provenance, tags `v1.6.0` and cuts a
+   GitHub release.
+3. Run [`fg-dist release`](/commands/release) with `--patch`, `--minor` or
+   `--major` — it prints the three and stops if you do not say which. On
+   `--minor`: `v1-6` is pushed at `1.6.1`, and a pull request moves main to
+   `1.7.0`.
+4. The distribution takes it when it is ready, with [`fg-dist bump`](/commands/bump).

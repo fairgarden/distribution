@@ -1,0 +1,18 @@
+# For when this repository is cloned on its own.
+#
+# pnpm uses the nearest workspace file to where it is run, so inside a
+# distribution this one applies to `pnpm install` run from THIS directory —
+# which would build a second workspace with its own lockfile and without the
+# distribution's overrides. Install from the distribution root instead.
+packages:
+  # The workspace root — this module — is always a member; these are the
+  # additions.
+  - docs
+
+# pnpm 10 defaults this to false, so without it the packages above resolve
+# their dependency on this module from the registry instead of from the
+# checkout next to them.
+linkWorkspacePackages: true
+# Keep plain semver ranges in package.json: the range is what a published
+# module is installed by, and what a distribution reads to resolve versions.
+saveWorkspaceProtocol: false

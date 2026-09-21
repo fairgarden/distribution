@@ -1,0 +1,85 @@
+# `canary`
+
+```bash
+fg-dist canary
+```
+
+Stamps a canary version into `package.json`, ready to publish. Run by CI, as
+`pnpm run canary` — there is rarely a reason to run it by hand.
+
+```
+Stamped @acme/widget@1.7.0-0.canary.3
+```
+
+## The version it picks
+
+```
+2.0.0-0.canary.3
+```
+
+The `0.canary.N` is not decoration. A canary has to sort **below** every real
+version of what it is building towards, or somebody's range resolves to one,
+and that is harder than it looks:
+
+| Shape | Below `2.0.0` | Below `2.0.0-beta.2` |
+| --- | --- | --- |
+| `2.0.0-canary.3` | yes | **no** — `canary` beats `beta` as a string |
+| `2.0.0-beta.2.canary.3` | yes | **no** — it is *after* `beta.2` |
+| `2.0.0-0.canary.3` | yes | yes |
+
+Semver ranks numeric identifiers below alphanumeric ones, so a numeric first
+identifier is the one slot beneath `alpha`, `beta`, `rc` and anything else
+anyone names. That puts a canary under the floor of every prerelease range, so
+no range resolves to it:
+
+```
+maxSatisfying([2.0.0-beta.2, 2.0.0-0.canary.0], '^2.0.0-beta.2')  ->  2.0.0-beta.2
+```
+
+`npm install pkg@canary` is unaffected, because a dist tag is a name rather
+than a range.
+
+One shape for every target, prerelease or not, so there is no case where this
+is nearly right.
+
+### The count
+
+`N` is this canary's position within its release cycle, read back from the
+registry. The prefix ignores the prerelease, so `2.0.0-alpha.0`, `2.0.0-beta.1`
+and `2.0.0` are one continuous run of canaries rather than three that restart
+and collide at `.0`.
+
+A CI run number would look similar and be wrong. It skips whenever a run fails
+or deduplicates, which turns published versions into a record of workflow
+bookkeeping rather than of releases.
+
+## Doing nothing, on purpose
+
+Each canary records the commit it was built from in a `gitSha` field. When the
+canary tag already points at the commit being built, nothing is written:
+
+```
+@acme/widget@1.7.0-0.canary.3 is already the canary for 4d1b9d8.
+```
+
+That is what makes the nightly build a no-op on a quiet day, rather than a
+version bump with nothing in it.
+
+## In the workflow
+
+It writes `version` and `skip` as step outputs, so the publish step can decide
+for itself:
+
+```yaml
+- name: Stamp the canary version
+  id: canary
+  run: pnpm run canary
+
+- name: Publish to npm
+  if: steps.canary.outputs.skip != 'true'
+  run: npm publish --tag canary --provenance
+```
+
+A canary is not a release and carries no promise. It exists so that "does main
+work for me?" can be answered without a checkout — see
+[Releasing a module](/overview/releasing).

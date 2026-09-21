@@ -33,10 +33,26 @@ Then commit the new submodule here.
 Step 5 clones nothing: `git submodule add` adopts a repository already at the
 path. So this works before the remote exists, which is the point.
 
+If the directory has packages inside it — a docs site, usually — it also gets a
+`pnpm-workspace.yaml`, because those were members of the distribution's
+workspace and nothing out here says so. See
+[Two workspaces, one module](/overview/modules#two-workspaces-one-module).
+
 ## Afterwards
 
 Push it. Until you do the submodule points at a remote nobody else can fetch.
 Then commit the new submodule pointer.
+
+## The tag it leaves
+
+The initial commit is tagged `v<version>` from the manifest, so
+[`sync`](/commands/sync) has something to track. That tag is also the one the
+module's first release would have created, so
+[`release --check`](/commands/release) refuses that version — it will not
+publish something it cannot then tag.
+
+Release the *next* version rather than the one it was extracted at, or pass
+`--no-tag` and let the first release make its own.
 
 ## Options
 

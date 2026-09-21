@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises'
 
 import path from 'node:path'
+import { writeOverrides } from './overrides.ts'
 import { repositoryRoot } from './submodules.ts'
 import { readPackageName } from './scaffold.ts'
 import { addMount, ConfigEditError, declaresMonolith } from './config-edit.ts'
@@ -92,6 +93,10 @@ export const findMonolith = async (
 }
 
 export interface AddModuleResult {
+  /** Whether the workspace overrides were updated to include this module. */
+  overrides: boolean
+  /** Why they were not, when the workspace could not be edited. */
+  overridesError: string | undefined
   mount: string
   relativePath: string
   packageName: string | undefined
@@ -197,7 +202,26 @@ export const addModule = async (
           }
       : { config: undefined, mounted: false, error: undefined }
 
+  // The distribution resolves its own modules from the tree, not from their
+  // declared ranges — which stop matching as soon as a submodule is bumped
+  // past them.
+  // The repository, not where the command was run: adding a module from
+  // apps/monolith is a supported path, and `cwd` there is not the root.
+  //
+  // Last, and after everything that matters. The submodule is added and the
+  // mount is written by now, so a workspace this cannot edit — a sibling with
+  // no checkout, an `overrides:` key someone else wrote — is something to
+  // report, not something to fail the whole command over.
+  const overrides = await writeOverrides(repositoryRoot(cwd) ?? cwd).catch(
+    (error: unknown) => ({
+      changed: false,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  )
+
   return {
+    overrides: overrides.changed,
+    overridesError: 'error' in overrides ? overrides.error : undefined,
     mount,
     relativePath: placedAt,
     packageName,

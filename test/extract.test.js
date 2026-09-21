@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { extractModule } from '../dist/extract.js'
+import { extractModule, workspaceFile } from '../dist/extract.js'
 import { submodules } from '../dist/submodules.js'
 
 // extractModule commits, and it must sign when the user has configured signing
@@ -168,4 +168,35 @@ test('refuses to mount a module that has no package name', async () => {
   const result = await addModule(root, remote, {})
   assert.equal(result.mounted, false)
   assert.match(result.mountError, /no package name/)
+})
+
+test('an extracted module carries a workspace for the packages inside it', async () => {
+  const root = grown({ at: 'packages/charts' })
+  mkdirSync(path.join(root, 'packages/charts/docs'), { recursive: true })
+  writeFileSync(
+    path.join(root, 'packages/charts/docs/package.json'),
+    '{"name":"@acme/charts-docs","version":"0.0.0","private":true}\n'
+  )
+
+  await extractModule(root, 'packages/charts', { url: 'https://example.invalid/charts.git' })
+
+  const file = path.join(root, 'packages/charts/pnpm-workspace.yaml')
+  assert.equal(existsSync(file), true)
+  const body = readFileSync(file, 'utf8')
+  assert.match(body, /^ {2}- docs$/m)
+  // pnpm 10 links nothing across a workspace unless told to.
+  assert.match(body, /^linkWorkspacePackages: true$/m)
+})
+
+test('a module with nothing nested in it gets no workspace file', async () => {
+  const root = grown({ at: 'packages/charts' })
+  await extractModule(root, 'packages/charts', { url: 'https://example.invalid/charts.git' })
+
+  assert.equal(existsSync(path.join(root, 'packages/charts/pnpm-workspace.yaml')), false)
+})
+
+test('node_modules and dot directories are not workspace members', () => {
+  // The listing that feeds this skips them; this pins the shape it produces.
+  assert.equal(workspaceFile([]).includes('node_modules'), false)
+  assert.match(workspaceFile(['docs', 'examples']), /- docs\n  - examples/)
 })

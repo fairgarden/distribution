@@ -1,8 +1,14 @@
 {
   "name": "@fairgarden/distribution",
   "version": "0.1.0-alpha.0",
-  "private": true,
   "description": "Compose versioned modules into a distribution, and extend one distribution from another",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fairgarden/distribution.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "UNLICENSED",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,10 +29,14 @@
     "build": "tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "lint": "eslint",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "canary": "node dist/cli.js canary",
+    "release": "node dist/cli.js release",
+    "release:check": "node dist/cli.js release --check"
   },
   "dependencies": {
     "@babel/parser": "^7.29.9",
+    "mdast-util-from-markdown": "^2.0.3",
     "semver": "^7.8.5"
   },
   "devDependencies": {

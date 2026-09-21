@@ -4,6 +4,19 @@ import { execFileSync } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
+import { writeReadmes } from './readme.ts'
+import { writeWorkflows } from './workflows.ts'
+import { writeOverrides } from './overrides.ts'
+import {
+  checkReleasable,
+  planRelease,
+  readRelease,
+  release,
+  reportToActions as reportRelease,
+  startPrerelease,
+  type Bump,
+} from './release.ts'
+import { reportToActions as reportCanary, stampCanary } from './canary.ts'
 import { describeRemote, isSsh, toHttps } from './git-url.ts'
 import {
   distributionRepo,
@@ -39,15 +52,26 @@ Commands:
   add-module <url>     Add a module repository as a submodule and link it
   extract <path>       Turn a directory here into its own repository and submodule
   use-https [name...]  Rewrite submodule urls from ssh to https
+  readme               Record versions in the readmes; run in a distribution or a module
+  workflows            Give every module a publishing workflow
+  overrides            Point the workspace at this distribution's own checkouts
+  canary               Stamp a canary version into the manifest, for CI
+  release              Move a module on from the release it just published
+  prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version
 
 Options:
   --cwd <dir>          Repository directory (default: the working directory)
-  --major              Allow major upgrades, which are held back by default (bump)
+  --major              Allow major upgrades (bump); the next major (release, prerelease)
+  --minor              Release the next minor, or branch one (release, prerelease)
+  --patch              Release the next patch, staying on this line (release)
+  --id <name>          Prerelease identifier: alpha, beta, rc (release, prerelease)
   --no-fetch           Use the refs already fetched (sync, bump)
   --dry-run            Report what would change without changing it
+  --check              Verify instead of writing (readme, release, overrides)
+                       --dry-run does the same for workflows, readme and overrides
   --name <name>        Package name for "init", mount name for add-module
   --at <dir>           Where add-module puts the submodule (default: apps/<name>)
   --no-git             Skip "git init" when scaffolding
@@ -57,6 +81,8 @@ Options:
   --ssh                Record a submodule's URL as given, without rewriting it
   --no-verify          Skip checking whether the https urls can be cloned
   --no-tag             Do not tag the extracted module with its declared version
+  --force              Overwrite workflows that are already there (workflows)
+  --no-push            Leave the release branches local, and open no pull request
 `
 
 interface Args {
@@ -76,6 +102,10 @@ interface Args {
   ssh: boolean
   verify: boolean
   tag: boolean
+  force: boolean
+  push: boolean
+  bump: 'patch' | 'minor' | 'major' | undefined
+  id: string | undefined
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -96,6 +126,10 @@ const parseArgs = (argv: string[]): Args => {
     ssh: false,
     verify: true,
     tag: true,
+    force: false,
+    push: true,
+    bump: undefined,
+    id: undefined,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -106,6 +140,13 @@ const parseArgs = (argv: string[]): Args => {
       args.check = true
     } else if (arg === '--major') {
       args.major = true
+      args.bump = 'major'
+    } else if (arg === '--minor') {
+      args.bump = 'minor'
+    } else if (arg === '--patch') {
+      args.bump = 'patch'
+    } else if (arg === '--id') {
+      args.id = argv[++index]
     } else if (arg === '--no-fetch') {
       args.fetch = false
     } else if (arg === '--dry-run') {
@@ -128,6 +169,10 @@ const parseArgs = (argv: string[]): Args => {
       args.verify = false
     } else if (arg === '--no-tag') {
       args.tag = false
+    } else if (arg === '--force') {
+      args.force = true
+    } else if (arg === '--no-push') {
+      args.push = false
     } else if (!arg.startsWith('-')) {
       if (args.command) args.names.push(arg)
       else args.command = arg
@@ -308,6 +353,18 @@ const main = async (): Promise<number> => {
       process.stdout.write('It has no package.json, so nothing was linked.\n')
     }
 
+    if (result.overrides) {
+      process.stdout.write(
+        'Workspace overrides updated, so this resolves from the tree rather than npm\n'
+      )
+    } else if (result.overridesError) {
+      process.stderr.write(
+        `\nThe module is added, but the workspace overrides were not updated:\n` +
+          `  ${result.overridesError}\n` +
+          'Run `fg-dist overrides` once that is sorted.\n'
+      )
+    }
+
     if (result.mounted && result.monolithConfig) {
       process.stdout.write(
         `Mounted at /${result.mount} in ${path.relative(args.cwd, result.monolithConfig)}\n`
@@ -341,6 +398,311 @@ const main = async (): Promise<number> => {
     return 0
   }
 
+
+  if (args.command === 'readme') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    const { updates, modules, kind } = await writeReadmes(root, {
+      check: args.check || args.dryRun,
+    })
+    const changed = updates.filter((update) => update.changed)
+
+    for (const module of modules) {
+      process.stdout.write(`${module.relativePath}  ${module.name}@${module.version}\n`)
+    }
+
+    if (changed.length === 0) {
+      process.stdout.write(
+        kind === 'module'
+          ? 'This module\'s readme already states its version.\n'
+          : '\nEvery readme already states its version.\n'
+      )
+      return 0
+    }
+
+    if (args.check) {
+      process.stderr.write(
+        `\n${changed.length} readme(s) are out of date:\n${changed
+          .map((update) => `  ${path.relative(root, update.file)}`)
+          .join('\n')}\nRun \`fg-dist readme\` to update them.\n`
+      )
+      return 1
+    }
+
+    process.stdout.write(
+      `\nUpdated:\n${changed
+        .map((update) => `  ${path.relative(root, update.file)}`)
+        .join('\n')}\n`
+    )
+    return 0
+  }
+
+  if (args.command === 'workflows') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    const updates = await writeWorkflows(root, {
+      force: args.force,
+      dryRun: args.dryRun,
+    })
+
+    if (updates.length === 0) {
+      process.stdout.write(
+        'No modules here. Run this in a distribution, which is where the modules are.\n'
+      )
+      return 0
+    }
+
+    const written = updates.filter((update) => !update.skipped)
+    for (const update of updates) {
+      process.stdout.write(
+        update.skipped
+          ? `${update.relativePath}  has one already\n`
+          : `${update.relativePath}  ${update.files.join(', ')}\n`
+      )
+    }
+
+    if (written.length === 0) {
+      process.stdout.write(
+        '\nEvery module already publishes. Pass --force to overwrite the workflows.\n'
+      )
+      return 0
+    }
+
+    const unprivated = written.filter((update) => update.unprivated)
+    const missingFiles = written.filter((update) => update.missingFiles)
+
+    if (args.dryRun) {
+      process.stdout.write(`\n${written.length} module(s) would be written. Nothing changed.\n`)
+      return 0
+    }
+
+    if (unprivated.length > 0) {
+      process.stdout.write(
+        `\nTook "private": true off ${unprivated.map((u) => u.relativePath).join(', ')} — ` +
+          'a private package cannot publish.\n'
+      )
+    }
+    const missingAccess = written.filter((update) => update.missingAccess)
+    if (missingAccess.length > 0) {
+      process.stdout.write(
+        `\nNo "publishConfig.access" in ${missingAccess.map((u) => u.relativePath).join(', ')}.\n` +
+          'Not set here, because npm treats an explicit value as an instruction to\n' +
+          'change an existing package\'s visibility. Say which it is yourself:\n' +
+          '  "publishConfig": { "access": "public" }      — and provenance is generated\n' +
+          '  "publishConfig": { "access": "restricted" }  — and it is not\n'
+      )
+    }
+    if (missingFiles.length > 0) {
+      process.stdout.write(
+        `\nNo "files" list in ${missingFiles.map((u) => u.relativePath).join(', ')}.\n` +
+          'npm will ship whatever is in the directory. Say what belongs in the tarball:\n' +
+          '  a module consumed as source ships "app", "lib", "public";\n' +
+          '  one that builds ships "dist".\n'
+      )
+    }
+
+    process.stdout.write(
+      `\nWrote a workflow into ${written.length} module(s).\n` +
+        'Each one is a separate repository, so commit and push them individually.\n' +
+        'npm trusted publishing has to be configured per package before the first run:\n' +
+        '  publish once from a workstation, then point the trusted publisher at\n' +
+        '  .github/workflows/publish.yml in that module\'s repository.\n'
+    )
+    return 0
+  }
+
+  if (args.command === 'overrides') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    const { file, names, changed, missing } = await writeOverrides(root, {
+      check: args.check || args.dryRun,
+    })
+
+    if (missing) {
+      process.stderr.write(
+        `There is no ${path.relative(root, file) || 'pnpm-workspace.yaml'} here. ` +
+          'A distribution needs one before its modules can be overridden.\n'
+      )
+      return 1
+    }
+
+    if (names.length === 0) {
+      process.stdout.write(
+        'No modules here. Run this in a distribution, which is what does the overriding.\n'
+      )
+      return 0
+    }
+
+    for (const name of names) process.stdout.write(`  ${name}\n`)
+
+    if (!changed) {
+      process.stdout.write(`\n${path.relative(root, file)} already covers every module.\n`)
+      return 0
+    }
+
+    if (args.dryRun) {
+      process.stdout.write(`\n${path.relative(root, file)} would be updated.\n`)
+      return 0
+    }
+
+    if (args.check) {
+      process.stderr.write(
+        `\n${path.relative(root, file)} does not match the modules here.\n` +
+          'Run `fg-dist overrides` to update it.\n'
+      )
+      return 1
+    }
+
+    process.stdout.write(
+      `\nUpdated ${path.relative(root, file)}. Run \`pnpm install\` to take it up.\n`
+    )
+    return 0
+  }
+
+  if (args.command === 'canary') {
+    const root = repositoryRoot(args.cwd) ?? args.cwd
+    const result = await stampCanary(root, { dryRun: args.dryRun })
+    await reportCanary(result)
+
+    process.stdout.write(
+      result.skip
+        ? `${result.name}@${result.version} is already the canary for ${result.sha}.\n`
+        : `${args.dryRun ? 'Would stamp' : 'Stamped'} ${result.name}@${result.version}\n`
+    )
+    return 0
+  }
+
+  if (args.command === 'release') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    if (args.check) {
+      const releasable = await checkReleasable(root)
+      await reportRelease(releasable)
+      process.stdout.write(
+        `${releasable.name}@${releasable.version} is not on npm; ready to release as ` +
+          `${releasable.tag}.\n`
+      )
+      return 0
+    }
+
+    // Which way main moves on is a judgement about what changed, so it is asked
+    // for rather than guessed at. Showing all three is the cheapest way to ask.
+    if (!args.bump) {
+      const { released, tagged, base } = await readRelease(root, { bump: 'minor' })
+      if (!released.includes('-')) {
+        process.stdout.write(
+          `Released ${released}, ${tagged ? `tagged ${base}` : 'which is not tagged here'}\n\n` +
+            'Which way does main move on?\n\n'
+        )
+        for (const bump of ['patch', 'minor', 'major'] as Bump[]) {
+          const plan = planRelease(released, { bump })
+          process.stdout.write(
+            `  --${bump.padEnd(6)} ${plan.next.version.padEnd(8)} ` +
+              (plan.maintenance
+                ? `${plan.maintenance.branch} keeps ${released.split('.').slice(0, 2).join('.')}.x\n`
+                : 'stays on this line; nothing branches off\n')
+          )
+        }
+        process.stdout.write(
+          `\nOr \`fg-dist prerelease --major\` to start the next line beside main, ` +
+            'without\nmoving main off this one.\n'
+        )
+        return 1
+      }
+    }
+
+    const outcome = await release(root, {
+      bump: args.bump,
+      id: args.id,
+      dryRun: args.dryRun,
+      push: args.push,
+    })
+    const { plan } = outcome
+
+    process.stdout.write(
+      `Released ${plan.released}, ` +
+        `${plan.tagged ? `tagged ${plan.base}` : 'which is not tagged here'}\n\n`
+    )
+    const width = pad([plan.maintenance?.branch ?? '', plan.next.branch])
+    if (plan.maintenance) {
+      process.stdout.write(
+        `  ${plan.maintenance.branch.padEnd(width)}  ${plan.maintenance.version}  ` +
+          `cut from ${plan.base}, where ${plan.released} is maintained\n`
+      )
+    }
+    process.stdout.write(
+      `  ${plan.next.branch.padEnd(width)}  ${plan.next.version}  ` +
+        `opened against ${outcome.base}\n`
+    )
+
+    if (args.dryRun) {
+      process.stdout.write('\nNothing written. Drop --dry-run to do it.\n')
+      return 0
+    }
+
+    // Only worth saying when something was cut from the tag. A prerelease has
+    // no maintenance branch, so there is nothing the missing tag affected.
+    if (!plan.tagged && plan.maintenance) {
+      process.stdout.write(
+        `\nThere is no v${plan.released} tag here, so ${plan.maintenance.branch} was cut ` +
+          `from HEAD.\nIf the release workflow has not run yet, run it first: the tag is ` +
+          `what\nseparates the released commit from whatever ${outcome.base} has done since.\n`
+      )
+    }
+
+    if (!outcome.pushed) {
+      process.stdout.write('\nLeft local. Push them and open the pull request yourself.\n')
+      return 0
+    }
+
+    process.stdout.write(
+      outcome.pullRequest
+        ? `\n${outcome.pullRequest}\n`
+        : '\nPushed. `gh` is not here, so open the pull request yourself.\n'
+    )
+    return 0
+  }
+
+  if (args.command === 'prerelease') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    if (args.bump !== 'major' && args.bump !== 'minor') {
+      process.stderr.write(
+        'prerelease needs --major or --minor: which line is being started.\n'
+      )
+      return 1
+    }
+
+    const { plan, created, pushed } = await startPrerelease(root, {
+      bump: args.bump,
+      id: args.id,
+      dryRun: args.dryRun,
+      push: args.push,
+    })
+
+    process.stdout.write(
+      `  ${plan.branch}  ${plan.version}  cut from ${plan.from}, which main keeps\n`
+    )
+
+    if (args.dryRun) {
+      process.stdout.write('\nNothing written. Drop --dry-run to do it.\n')
+      return 0
+    }
+    if (!created) return 1
+
+    process.stdout.write(
+      pushed
+        ? `\nPushed. Release from it with a dist tag of its own — \`next\`, say — so\n` +
+            '`latest` goes on meaning the line main is shipping.\n'
+        : '\nLeft local. Push it when you are ready.\n'
+    )
+    return 0
+  }
 
   if (args.command === 'check') {
     const root = repositoryRoot(args.cwd)
@@ -402,7 +764,18 @@ const main = async (): Promise<number> => {
       process.stdout.write(`Shipping ${result.packageName}@${result.version}\n`)
     }
     if (result.tagged) {
-      process.stdout.write(`Tagged ${result.tagged}, so sync can track it\n`)
+      process.stdout.write(
+        `Tagged ${result.tagged}, so sync can track it\n` +
+          `  That tag is what the first release would have created, so release it\n` +
+          `  with the next version rather than this one — or \`--no-tag\` next time.\n`
+      )
+    }
+    if (result.overridesError) {
+      process.stderr.write(
+        `\nThe module is extracted, but the workspace overrides were not updated:\n` +
+          `  ${result.overridesError}\n` +
+          'Run `fg-dist overrides` once that is sorted.\n'
+      )
     }
     process.stdout.write(`origin is ${result.url}\n`)
     if (result.rewritten) {

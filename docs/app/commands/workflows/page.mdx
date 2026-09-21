@@ -1,0 +1,102 @@
+# `workflows`
+
+```bash
+fg-dist workflows [--force]
+```
+
+Gives every module a publishing workflow, so each one can release itself.
+
+Run it in a distribution. Each module is a separate repository, so the files
+land in each submodule's working tree and are committed and pushed there —
+`workflows` writes them and stops.
+
+```
+apps/widget      .github/actions/publish-prepare/action.yml, .github/workflows/publish.yml, package.json
+packages/design  has one already
+```
+
+A module that already has a workflow is left alone. It may have been changed on
+purpose, and overwriting it would be the kind of help nobody asked for. Pass
+`--force` to replace them.
+
+## What it writes
+
+| File | For |
+| --- | --- |
+| `.github/workflows/publish.yml` | the canary and release jobs |
+| `.github/actions/publish-prepare/action.yml` | install and build, shared by both |
+| `package.json` | the release scripts, `@fairgarden/distribution`, `packageManager` |
+
+The workflow is two files and no logic of its own. Every step that has to decide
+something calls `fg-dist`, through a named script:
+
+```json
+{
+  "scripts": {
+    "canary": "fg-dist canary",
+    "release": "fg-dist release",
+    "release:check": "fg-dist release --check"
+  }
+}
+```
+
+So the workflow is byte-for-byte the same in every module — only the package
+name it publishes differs — and `pnpm release` is the answer to "how do I
+release this" wherever you happen to be standing. A script the module already
+defines is left alone; it may call the tool differently on purpose.
+
+`@fairgarden/distribution` is added as a devDependency at the version of the CLI
+that wrote the files, so a module is pinned to the tool that set it up rather
+than to whatever was current when the template was last edited. The one
+exception is `@fairgarden/distribution` itself, which cannot depend on being
+published to release itself: its scripts call `node dist/cli.js`.
+
+The `packageManager` field is copied from the distribution — it is the pnpm the
+module is developed against, whether or not the module said so. `pnpm/action-setup`
+reads it, and will not run without it. A module that pins its own is left as it is.
+
+## There is no token
+
+Publishing is npm trusted publishing over OIDC. The workflow asks for
+`id-token: write` and npm checks the claim against the repository and the
+workflow file; there is nothing to store, rotate or leak.
+
+It has to be configured once per package, and it cannot be configured for a
+package that does not exist yet:
+
+1. `npm publish` once from a workstation.
+2. On npmjs.com, add a trusted publisher for the package, pointing at the
+   repository and `.github/workflows/publish.yml`.
+
+After that the workflow publishes on its own. The file path is part of what npm
+checks, which is why both jobs live in one file rather than two.
+
+## The canary job
+
+Runs on every push to main, and nightly. One step — [`canary`](/commands/canary)
+— works out the version and whether there is anything to publish at all, so the
+nightly run is a no-op when nothing has landed. Pushes authored by Renovate are
+skipped too; a lockfile bump does not warrant a canary.
+
+## The release job
+
+Dispatched by hand, with a dist-tag and a dry-run switch. It publishes the
+version that is already in `package.json` — it does not bump anything.
+
+`release:check` refuses if that version is already on npm, which is the common
+mistake: main is meant to carry the next unreleased version, so a release that
+finds its own version published means [`fg-dist release`](/commands/release) has
+not run yet.
+
+It runs in the `npm-publish` environment, so a review or a wait can be attached
+to it in repository settings without touching this file. On success it tags the
+commit and opens a GitHub release with generated notes.
+
+## Pinning the actions
+
+`actions/checkout` is pinned to a commit, because it handles credentials. The
+rest are on tags with a note to pin them once Renovate is watching the
+repository — a pin nobody updates is worse than a tag.
+
+See [Releasing a module](/overview/releasing) for what the versions mean, and
+[`release`](/commands/release) for what happens after a release ships.

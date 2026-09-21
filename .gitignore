@@ -3,3 +3,7 @@ dist
 *.tsbuildinfo
 test/tmp
 .turbo
+
+# Created only by running pnpm install from this directory, which builds a
+# second workspace. Inside a distribution, install from its root.
+pnpm-lock.yaml

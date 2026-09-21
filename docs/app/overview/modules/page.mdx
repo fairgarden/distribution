@@ -29,7 +29,77 @@ pnpm links every submodule into the workspace, so an app importing
 submodule commit the only pin: there is no published copy to disagree with.
 
 An app that depends on a package should declare it as a `peerDependency`, so the
-workspace supplies it and the app carries no version of its own.
+workspace supplies it and the app carries no version of its own. Keep a
+`devDependency` at the same range, so the module still builds cloned on its own.
+
+The range it declares is for publishing, and it is not what picks the copy used
+here. Linking by range breaks as soon as a submodule is bumped past it — pnpm
+resolves the sibling from the registry instead, and the app builds against the
+last published version with a newer checkout sitting next to it. The
+distribution settles it with [`overrides`](/commands/overrides), which say
+`workspace:*` for every module it ships.
+
+## Two workspaces, one module
+
+A module is checked out in two situations, and each has its own workspace root.
+
+Inside a distribution, the distribution's `pnpm-workspace.yaml` is the one in
+effect. Its globs reach into the submodules and pick up anything nested in
+them:
+
+```yaml
+packages:
+  - "apps/*"
+  - "packages/*"
+  # a module's docs site is its own workspace member, so its Next and MDX
+  # dependencies stay out of the module it documents
+  - "apps/*/docs"
+  - "packages/*/docs"
+```
+
+Cloned on its own, none of that exists. So a module with anything nested in it
+carries the same arrangement in a `pnpm-workspace.yaml` of its own:
+
+```yaml
+packages:
+  # The workspace root — this module — is always a member; these are the
+  # additions.
+  - docs
+
+linkWorkspacePackages: true
+saveWorkspaceProtocol: false
+```
+
+The settings are not decoration. **pnpm 10 defaults `linkWorkspacePackages` to
+false**, so without it a docs site that depends on the module it documents
+resolves that dependency from the registry — quietly building against the last
+published version instead of the checkout it is sitting in. Inside a
+distribution the root supplies the setting; standing on its own, the module has
+to.
+
+`saveWorkspaceProtocol: false` keeps plain semver ranges in `package.json`
+rather than `workspace:*`. A `workspace:` range cannot be installed from a
+clone of the module's own repository — which is where its
+[publish workflow](/commands/workflows) runs — and the range is also what a
+distribution reads to [resolve versions](/overview/versioning#where-a-version-comes-from).
+
+### Install from the root
+
+pnpm uses the **nearest** workspace file to wherever it is run, not the
+outermost one. Inside a distribution that means:
+
+```bash
+pnpm install                      # at the root: one workspace, the overrides apply
+cd packages/design && pnpm install   # a second workspace, its own lockfile, no overrides
+```
+
+The second is not an error and says nothing — it just builds a different tree.
+Install from the distribution root; use `--filter` to narrow what you are
+working on rather than changing directory first.
+
+[`extract`](/commands/extract) writes the file for you when the directory it is
+carving out has packages inside it, with that warning at the top of it. A module
+with nothing nested in it needs no workspace file at all.
 
 ## Build scripts
 
