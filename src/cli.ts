@@ -26,6 +26,7 @@ import {
   write,
 } from './scaffold.ts'
 import { describeViolations, inspectExtends } from './extends.ts'
+import { buildPolicy, findPolicy, POLICIES, setupTurbo, testPolicy, usePolicy } from './policy.ts'
 import {
   inspect,
   isPublic,
@@ -61,6 +62,10 @@ Commands:
   check                Fail when this ships anything older than what it extends
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version
+  policy build         Build the organization's policy: policies/, on every module's own
+  policy test          Test each module's rules, then the organization's on top of them
+  policy use           Put the built policy beside this service, for it to run
+  policy setup         Have turbo build the policy once, before each service that uses it
 
 Options:
   --cwd <dir>          Repository directory (default: the working directory)
@@ -83,6 +88,7 @@ Options:
   --no-tag             Do not tag the extracted module with its declared version
   --force              Overwrite workflows that are already there (workflows)
   --no-push            Leave the release branches local, and open no pull request
+  --out <file>         Where policy build writes the bundle (default: policies/dist/)
 `
 
 interface Args {
@@ -106,6 +112,7 @@ interface Args {
   push: boolean
   bump: 'patch' | 'minor' | 'major' | undefined
   id: string | undefined
+  out: string | undefined
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -130,6 +137,7 @@ const parseArgs = (argv: string[]): Args => {
     push: true,
     bump: undefined,
     id: undefined,
+    out: undefined,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -173,6 +181,8 @@ const parseArgs = (argv: string[]): Args => {
       args.force = true
     } else if (arg === '--no-push') {
       args.push = false
+    } else if (arg === '--out') {
+      args.out = path.resolve(argv[++index] ?? '.')
     } else if (!arg.startsWith('-')) {
       if (args.command) args.names.push(arg)
       else args.command = arg
@@ -702,6 +712,41 @@ const main = async (): Promise<number> => {
         : '\nLeft local. Push it when you are ready.\n'
     )
     return 0
+  }
+
+  if (args.command === 'policy') {
+    const [action] = args.names
+    if (action === 'use') {
+      const { policy, status } = usePolicy(args.cwd)
+      process.stdout.write(
+        policy
+          ? status === 0
+            ? `Using ${path.relative(args.cwd, policy.built) || policy.built}.\n`
+            : ''
+          : 'No organization policy here: the built-in rules decide.\n'
+      )
+      return status
+    }
+    const policy = findPolicy(args.cwd)
+    if (!policy) {
+      process.stderr.write(`There is no organization policy here: no ${POLICIES}/.manifest above ${args.cwd}.\n`)
+      return 1
+    }
+    if (action === 'build') return buildPolicy(policy, args.cwd, args.out)
+    if (action === 'test') return testPolicy(policy, args.cwd)
+    if (action === 'setup') {
+      const differ = setupTurbo(policy, { check: args.check })
+      if (differ.length === 0) {
+        process.stdout.write('turbo.json builds the policy once, before each service that uses it.\n')
+        return 0
+      }
+      process.stdout.write(
+        `${args.check ? 'turbo.json is missing' : 'Wrote'} ${differ.join(', ')}${args.check ? '; run fg-dist policy setup.' : ' into turbo.json.'}\n`
+      )
+      return args.check ? 1 : 0
+    }
+    process.stderr.write('Usage: fg-dist policy <build|test|use|setup>\n')
+    return 1
   }
 
   if (args.command === 'check') {

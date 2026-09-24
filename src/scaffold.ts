@@ -12,6 +12,8 @@ export const VERSIONS = {
   monolith: '^0.1.0-alpha.0',
   // Provides `fg-dist`, which the release scripts and the publish workflow call.
   distribution: '^0.1.0-alpha.0',
+  // Provides `fg-policy`, which `fg-dist policy` calls to build the organization's policy.
+  policy: '^0.1.0-alpha.0',
   next: '^16.3.5',
   react: '^19.3.0',
   types: {
@@ -99,7 +101,7 @@ export const monolithRepo = (name: string, origin?: string): Files => ({
   'turbo.json': json({
     $schema: 'https://turbo.build/schema.json',
     tasks: {
-      build: { dependsOn: ['^build'], outputs: ['.next/**', '!.next/cache/**'] },
+      build: { dependsOn: ['^build'], outputs: ['.next/**', '!.next/cache/**', 'dist/**'] },
       lint: { dependsOn: ['^lint'] },
       dev: { persistent: true, cache: false },
       'dev:service': { persistent: true, cache: false },
@@ -110,8 +112,9 @@ export const monolithRepo = (name: string, origin?: string): Files => ({
     version: '0.1.0-alpha.0',
     private: true,
     scripts: {
-      dev: 'next dev',
-      build: 'next build',
+      // Each takes a copy of the organization's policy to run, when there is one.
+      dev: 'fg-dist policy use && next dev',
+      build: 'fg-dist policy use && next build',
       start: 'next start',
       lint: 'eslint',
     },
@@ -122,6 +125,7 @@ export const monolithRepo = (name: string, origin?: string): Files => ({
       'react-dom': VERSIONS.react,
     },
     devDependencies: {
+      '@fairgarden/distribution': VERSIONS.distribution,
       '@types/node': VERSIONS.types.node,
       '@types/react': VERSIONS.types.react,
       '@types/react-dom': VERSIONS.types.reactDom,
@@ -322,6 +326,50 @@ export const calendarVersion = (on: Date = new Date()): string =>
   ].join('.')
 
 /**
+ * The organization's `policies/`: its `.manifest`, and a workspace package
+ * that builds and tests it with `fg-dist policy`. Empty of rules: until the
+ * organization writes some, the modules' own decide.
+ */
+const policiesFiles = (name: string, origin?: string): Files => ({
+  'policies/.manifest': json({
+    metadata: {
+      organization: name,
+      ...(origin ? { source: origin.replace(/\.git$/, '') } : {}),
+    },
+  }),
+  'policies/package.json': json({
+    name: `${name}-policies`,
+    private: true,
+    type: 'module',
+    scripts: { build: 'fg-dist policy build', test: 'fg-dist policy test' },
+    devDependencies: {
+      '@fairgarden/distribution': VERSIONS.distribution,
+      '@fairgarden/policy': VERSIONS.policy,
+    },
+  }),
+  'policies/.gitignore': '/dist\n/node_modules\n',
+  'policies/Readme.md': `# Policies
+
+The organization's rules for the services this distribution ships: who may
+join, what is shared and with whom. Each module brings its own rules, in its
+own \`policies/\`; the organization's go here, in the same Rego packages,
+adding to the places those rules leave for them — so upgrading a module keeps
+them.
+
+Change them by pull request, like anything else here: what is merged is what
+the next deployment runs, and anyone can read it on the id service's
+\`/policy\` page.
+
+\`\`\`bash
+fg-dist policy test     # each module's tests, then these on top
+fg-dist policy build    # what the services will run
+\`\`\`
+
+\`.manifest\` says whose rules these are; its \`metadata\` is shown with them.
+`,
+})
+
+/**
  * A repository that ships a set of modules to end users.
  *
  * The root package.json is the distribution manifest: its version is the date
@@ -349,13 +397,21 @@ export const distributionRepo = (
           tasks: {
             build: {
               dependsOn: ['^build'],
-              outputs: ['.next/**', '!.next/cache/**'],
+              outputs: ['.next/**', '!.next/cache/**', 'dist/**'],
             },
             lint: { dependsOn: ['^lint'] },
             dev: { persistent: true, cache: false },
           },
         }),
       }
+
+  // The organization's policy, built on every module's own; a workspace
+  // package, so turbo builds it once for every service that runs it.
+  files['pnpm-workspace.yaml'] = files['pnpm-workspace.yaml'].replace(
+    '  - "packages/*"\n',
+    '  - "packages/*"\n  - "policies"\n'
+  )
+  Object.assign(files, policiesFiles(name, origin))
 
   files['package.json'] = json({
     name,

@@ -2,7 +2,7 @@
 
 <!-- fg:version -->
 
-Version **0.1.0-alpha.0**
+Version **0.1.0-alpha.1**
 
 <!-- /fg:version -->
 
@@ -10,13 +10,13 @@ Version **0.1.0-alpha.0**
 
 ## Releasing
 
-This module releases on its own. `0.1.0-alpha.0` is what main is working towards,
+This module releases on its own. `0.1.0-alpha.1` is what main is working towards,
 not what is published — the version here is always the next one.
 
 1. **Publish it.** Run the *Publish* workflow from the Actions tab, picking the
    dist tag. It refuses if that version is already on npm.
 2. **Move it on.** `pnpm release` — opens a pull request bumping this branch
-   to `0.1.0-alpha.1`, or `pnpm release --id rc` to change
+   to `0.1.0-alpha.2`, or `pnpm release --id rc` to change
    identifier. A prerelease gets no maintenance branch; there is no released
    line behind it yet.
 
@@ -58,6 +58,7 @@ pnpm --filter @fairgarden/distribution-docs dev
 - **Deploying** — one deployment, or many
 - **Running it** — dev modes, and a hostname per app
 - **Growing a module** — building in place, then extracting
+- **Policies** — the organization's rules, on every module's own, built once
 - **Releasing a module** — semver, maintenance branches and dist-tags
 - **Submodule urls** — what a build host can actually clone
 - **Commands** and **Functions** — the `fg-dist` CLI and its API
@@ -85,6 +86,8 @@ fg-dist use-https            # rewrite ssh submodule urls, and check they are pu
 fg-dist readme               # write the module versions into the readmes
 fg-dist overrides            # resolve modules from the tree, not the registry
 fg-dist workflows            # give every module a publishing workflow
+fg-dist policy build         # the organization's policy, on every module's own
+fg-dist policy use           # give this service its copy, in its build
 fg-dist canary               # stamp a canary version, for CI
 fg-dist release --minor      # open the next version on main, and a branch behind it
 fg-dist prerelease --major   # start the next line on a branch, leaving main alone

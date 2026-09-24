@@ -1,0 +1,67 @@
+# Policies
+
+A distribution is run by an organization, and the organization has rules:
+who may join, who may see what, what it takes to approve something. Written
+as [Open Policy Agent](https://www.openpolicyagent.org) policy, with
+[`@fairgarden/policy`](https://github.com/fairgarden/policy), they are
+enforced by every service the distribution ships, shown in full to the people
+they govern, and changed the way the rest of the repository is: by pull
+request.
+
+## Where they live
+
+```
+acme/
+  apps/
+    id/policies/        the id service's own rules, as it ships them
+    members/policies/   the members service's
+  policies/             the organization's, on top
+    .manifest           whose they are
+    package.json
+    fairgarden/
+      members/admission.rego
+```
+
+A module's `policies/` asks its questions and leaves places for the
+organization's rules; the organization's `policies/`, marked by its
+`.manifest`, fills them in. Upgrading a module brings its rules and keeps the
+organization's.
+
+A distribution that extends another builds on the policy that one published —
+its `policies/`, from the installed package — and the organization's goes on
+top of both.
+
+## Versioned with the distribution
+
+Each build is named by the distribution's version and a digest of what is in
+it: `2026.10.01+3f9a2c1e4b5d`. The same rules are the same revision in every
+service; any change, however small, is a new one. Every decision a service
+makes is labelled with its revision, and the services keep each revision
+they run, so a decision can always be read beside the rules that made it.
+
+## Built once, run everywhere
+
+`policies/` is a workspace package, so turbo builds it once and caches it:
+
+```json
+{ "name": "@acme/core-policies", "scripts": { "build": "fg-dist policy build", "test": "fg-dist policy test" } }
+```
+
+Each service that runs it takes a copy during its build:
+
+```json
+{ "build": "fg-dist policy use && next build" }
+```
+
+and [`fg-dist policy setup`](/commands/policy#setup) tells turbo to build the
+policy before each of them. Nothing is published and nothing is signed: each
+deployment runs what is in the commit it was built from. A service built on
+its own, outside a distribution, has no policy to copy, and its built-in
+rules decide.
+
+## Starting one
+
+`fg-dist init distribution` scaffolds an empty `policies/`. Until it has
+rules, the modules' own decide — the same as their built-in rules. Each
+module's `policies/` says what it asks and where an organization's rules go;
+its `examples/` has an organization's rules to start from.

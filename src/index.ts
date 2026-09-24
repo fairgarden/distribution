@@ -37,3 +37,6 @@ export {
   readParent,
 } from './extends.ts'
 export type { Distribution, ExtendsReport, FloorViolation } from './extends.ts'
+
+export { buildPolicy, findPolicy, setupTurbo, testPolicy, turboTasks, usePolicy } from './policy.ts'
+export type { DistributionPolicy } from './policy.ts'

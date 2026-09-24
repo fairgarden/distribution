@@ -194,3 +194,19 @@ test('a distribution records what it extends', async () => {
   assert.equal(pkg.distribution.extends, '@fg/core')
   assert.ok(pkg.dependencies['@fg/core'])
 })
+
+test("a distribution has a place for the organization's policy, built once by turbo", async () => {
+  for (const monolith of [true, false]) {
+    const root = await scaffold(distributionRepo('@acme/core', 'https://github.com/acme/core.git', undefined, { monolith }))
+    assert.match(readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'), /- "policies"/)
+    assert.deepEqual(readJson(root, 'policies/.manifest'), {
+      metadata: { organization: '@acme/core', source: 'https://github.com/acme/core' },
+    })
+    const policies = readJson(root, 'policies/package.json')
+    assert.equal(policies.name, '@acme/core-policies')
+    assert.equal(policies.scripts.build, 'fg-dist policy build')
+    assert.ok(policies.devDependencies['@fairgarden/policy'])
+  }
+  const root = await scaffold(distributionRepo('@acme/core'))
+  assert.match(readJson(root, 'apps/monolith/package.json').scripts.build, /^fg-dist policy use && next build$/)
+})

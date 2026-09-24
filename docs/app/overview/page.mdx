@@ -13,10 +13,12 @@ acme/
     widget/             a module with routes
   packages/
     design/             a module without routes, shared by the apps
+  policies/             the organization's policy, on every module's own
 ```
 
 Everything under `apps/` and `packages/` is a submodule with its own repository,
-its own history and its own semver tags.
+its own history and its own semver tags. `policies/` is the organization's own,
+and stays in the distribution.
 
 ## What the manifest holds
 
@@ -41,6 +43,8 @@ what is absent: no module versions. See
   depended on, and both are submodules resolved through the pnpm workspace.
 - **[Extending](/overview/extending)** — a distribution may ship another
   distribution's modules and move ahead of them, never behind.
+- **[Policies](/overview/policies)** — the organization's rules, on every
+  module's own, built once and run by every service.
 - **[Deploying](/overview/deploying)** — a simple distribution deploys as one
   Next app; a complex one deploys each app separately.
 - **[Running it](/overview/running)** — `dev` serves the monolith,

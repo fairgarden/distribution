@@ -1,0 +1,64 @@
+# `policy`
+
+```bash
+fg-dist policy build [--out FILE]
+fg-dist policy test
+fg-dist policy use
+fg-dist policy setup [--check]
+```
+
+The organization's policy: `policies/`, on every module's own `policies/`,
+and on the published policy of any distribution this one extends. Each
+command finds the distribution from wherever it is run — a module, the
+monolith, `policies/` itself — by looking for the `policies/` with a
+`.manifest` above it, not by asking git, which a build host may not have.
+
+Compiling is `@fairgarden/policy`'s: these find the layers and run the
+`fg-policy` the distribution installed.
+
+## `build`
+
+Builds the policy into `policies/dist/policies.tar.gz`, or `FILE`, named after
+the distribution's version and a digest of what is in it. `policies/`'s own
+`build` script, so turbo runs it once.
+
+## `test`
+
+Runs each module's tests on its own rules, then the organization's tests on
+everything together.
+
+## `use`
+
+Puts the built policy at `.policy/policies.tar.gz` in the service it is run
+from, where `@fairgarden/policy` reads it and Next traces it into the
+deployment. Builds it first if it has not been built, or was built from
+anything other than the rules as they are now — a digest of every rule,
+setting and manifest is kept beside the bundle, so a rule deleted counts as
+much as one changed. Outside a distribution it removes any copy left from
+before, and says the service's built-in rules decide.
+
+## `setup`
+
+Writes into `turbo.json` what builds the policy once for every service:
+
+- the policy's `build` and `test`, which read every module's `policies/` as
+  well as its own, and the distribution's `package.json`, whose version names
+  each revision — and the lockfile, when it extends a distribution, whose
+  policy is installed. `FG_POLICY_SIGNING_KEY` reaches the build, and changing
+  it builds again;
+- for each package whose `build` runs `fg-dist policy use`, a `build` that
+  waits for the policy's, with `.policy/**` among its outputs so a cached
+  build brings its copy back;
+- for each whose `dev` runs it, a `dev` that waits for the policy's build,
+  since a fresh checkout has built neither the policy nor the tools that
+  build it.
+
+With `--check`, changes nothing and exits 1 when `turbo.json` is out of date —
+for CI, and after adding a module.
+
+## Exit codes
+
+| | |
+| --- | --- |
+| `0` | done; or `use` outside a distribution |
+| `1` | no policy here (`build`, `test`, `setup`), `turbo.json` out of date (`setup --check`), or the build or tests failed |
