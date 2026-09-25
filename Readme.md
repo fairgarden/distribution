@@ -2,7 +2,7 @@
 
 <!-- fg:version -->
 
-Version **0.1.0-alpha.1**
+Version **0.1.0-alpha.2**
 
 <!-- /fg:version -->
 
@@ -10,13 +10,13 @@ Version **0.1.0-alpha.1**
 
 ## Releasing
 
-This module releases on its own. `0.1.0-alpha.1` is what main is working towards,
+This module releases on its own. `0.1.0-alpha.2` is what main is working towards,
 not what is published — the version here is always the next one.
 
 1. **Publish it.** Run the *Publish* workflow from the Actions tab, picking the
    dist tag. It refuses if that version is already on npm.
 2. **Move it on.** `pnpm release` — opens a pull request bumping this branch
-   to `0.1.0-alpha.2`, or `pnpm release --id rc` to change
+   to `0.1.0-alpha.3`, or `pnpm release --id rc` to change
    identifier. A prerelease gets no maintenance branch; there is no released
    line behind it yet.
 

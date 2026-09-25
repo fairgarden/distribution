@@ -1,6 +1,6 @@
 {
   "name": "@fairgarden/distribution",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Compose versioned modules into a distribution, and extend one distribution from another",
   "repository": {
     "type": "git",
