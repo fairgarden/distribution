@@ -400,6 +400,12 @@ const main = async (): Promise<number> => {
       process.stdout.write(`Already mounted at /${result.mount}.\n`)
     }
 
+    if (result.turbo) {
+      process.stdout.write(
+        "turbo.json: the monolith's build waits for its libraries, not its own build\n"
+      )
+    }
+
     process.stdout.write(
       result.monolithPackageJson
         ? '\nRun pnpm install and `fg-monolith merge-package-json`.\n'

@@ -15,6 +15,7 @@ Added apps/widget from https://github.com/acme/widget.git
 Shipping @acme/widget@1.2.0, as the checkout declares it
 Linked through the workspace in apps/monolith/package.json
 Mounted at /widget in apps/monolith/next.config.ts
+turbo.json: the monolith's build waits for its libraries, not its own build
 
 Run pnpm install and `fg-monolith merge-package-json`.
 ```
@@ -37,6 +38,12 @@ The config is parsed to find the mount map and the entry is spliced into the
 original text, so formatting and comments survive. When it cannot be edited —
 the apps declared somewhere else, say — you get the line to paste rather than a
 failed command that has already added the submodule.
+
+**Building.** The monolith compiles a mounted app from its source, so an app
+gets a `build:libs` task in `turbo.json` that waits only for its dependencies:
+the monolith's build then builds the app's libraries but never the app on its
+own. See [running a distribution](/overview/running#with-a-monolith). Only in a
+distribution whose `turbo.json` has `build:libs`.
 
 ## Options
 

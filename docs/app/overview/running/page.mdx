@@ -1,39 +1,54 @@
 # Running a distribution
 
 ```bash
-pnpm dev            # the monolith, plus the packages it builds from
-pnpm dev-services   # every app on its own, no monolith
+pnpm dev             # the monolith, serving every app
+pnpm build           # the monolith, as it is deployed
+pnpm modular:dev     # every app on its own, no monolith
+pnpm modular:build
+pnpm docs:dev        # the documentation sites
+pnpm docs:build
 ```
 
 ## With a monolith
 
-`dev` runs the monolith and the packages — not the mounted apps. The monolith
+`dev` and `build` run the monolith and nothing else of the apps. The monolith
 already serves their routes, so running their dev servers as well would be the
 same routes twice, on different ports.
 
+It compiles every app from its source, so its build waits for the libraries
+the apps use — built once, and cached by turbo — but not for each app's own
+build. `turbo.json` says so with a `build:libs` task that runs no script: a
+library's is its `build`, and a mounted app's, which
+[`add-module`](/commands/add-module) writes, is only its dependencies'. Turbo
+still hashes every app into the monolith's build, so changing one builds the
+monolith again.
+
 ## Every app on its own
 
-`dev-services` is the other shape. It runs each app's own dev server and not the
-monolith, which is what you want to work on one app in isolation, and the only
-shape available to a distribution [too complex to serve from one
-deployment](/overview/deploying#separate-deployments).
+`modular:dev` and `modular:build` are the other shape. They run each app's own
+`dev` or `build` and not the monolith, which is what you want to work on one
+app in isolation, and the only shape available to a distribution [too complex
+to serve from one deployment](/overview/deploying#separate-deployments).
 
-A `--separate` distribution has no monolith, so its `dev` *is* `dev-services`.
+A `--separate` distribution has no monolith, so its `dev` *is* `modular:dev`.
 
 ## Stable hostnames instead of ports
 
 Several dev servers at once means several ports to remember, and a collision
-whenever two default to the same one. Each app therefore runs through
-[portless](https://portless.sh), which gives it a name:
+whenever two default to the same one. A scaffolded module's `dev` therefore
+runs through [portless](https://portless.sh), which gives it a name:
 
 ```
-@acme/widget:dev:service: > portless widget next dev
-                          -> https://widget.localhost
+@acme/widget:dev: > portless widget next dev
+                  -> https://widget.localhost
 ```
-
-A scaffolded module gets a `dev:service` script and `portless` as a
-devDependency. Its plain `dev` stays `next dev`, so nothing depends on portless
-unless you run the services mode.
 
 The hostname is the package name without its scope, so `@acme/widget` becomes
-`widget.localhost`.
+`widget.localhost`. Only `modular:dev` runs a module's `dev`: the monolith
+compiles the module itself. An app that would rather keep a port gives its
+`dev` one — `next dev -p 3010` — and runs alongside the others all the same.
+
+## Documentation
+
+Neither shape runs a documentation site. Each module's `docs/` is its own
+workspace package, served by `docs:dev` and built by `docs:build`.

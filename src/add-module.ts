@@ -117,6 +117,8 @@ export interface AddModuleResult {
   rewritten: boolean
   /** Whether the module has routes, and so is mounted rather than depended on. */
   isApp: boolean
+  /** Whether turbo.json was told the monolith compiles this app from its source. */
+  turbo: boolean
 }
 
 /**
@@ -202,6 +204,9 @@ export const addModule = async (
           }
       : { config: undefined, mounted: false, error: undefined }
 
+  const turbo =
+    monolithRoot && isApp && packageName ? await compileFromSource(root, packageName) : false
+
   // The distribution resolves its own modules from the tree, not from their
   // declared ranges — which stop matching as soon as a submodule is bumped
   // past them.
@@ -234,7 +239,32 @@ export const addModule = async (
     url: recorded,
     rewritten,
     isApp,
+    turbo,
   }
+}
+
+const BUILD_LIBS = 'build:libs'
+
+/**
+ * Have the monolith's build wait for this app's libraries rather than for the
+ * app's own build: the monolith compiles it from source, so building it on its
+ * own as well would only take time. Only where turbo.json has the
+ * `build:libs` task this relies on.
+ */
+const compileFromSource = async (root: string, packageName: string): Promise<boolean> => {
+  const file = path.join(root, 'turbo.json')
+  let turbo: { tasks?: Record<string, unknown> }
+  try {
+    turbo = JSON.parse(await readFile(file, 'utf8'))
+  } catch {
+    return false
+  }
+
+  const key = `${packageName}#${BUILD_LIBS}`
+  if (!turbo.tasks?.[BUILD_LIBS] || turbo.tasks[key]) return false
+  turbo.tasks[key] = { dependsOn: [`^${BUILD_LIBS}`] }
+  await writeFile(file, `${JSON.stringify(turbo, null, 2)}\n`)
+  return true
 }
 
 /**

@@ -170,6 +170,57 @@ test('refuses to mount a module that has no package name', async () => {
   assert.match(result.mountError, /no package name/)
 })
 
+test("the monolith's build waits for a mounted app's libraries, not the app's build", async () => {
+  const { addModule } = await import('../dist/add-module.js')
+  const base = mkdtempSync(path.join(tmpdir(), 'build-libs-'))
+
+  const remote = (name, files) => {
+    const dir = path.join(base, name)
+    for (const [file, content] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
+      writeFileSync(path.join(dir, file), content)
+    }
+    git(dir, ['init', '-q', '-b', 'main'])
+    git(dir, ['add', '-A'])
+    git(dir, ['commit', '-qm', 'init'])
+    return dir
+  }
+  const widget = remote('widget', {
+    'package.json': JSON.stringify({ name: '@acme/widget', version: '1.0.0' }),
+    'app/page.tsx': '',
+  })
+  const charts = remote('charts', {
+    'package.json': JSON.stringify({ name: '@acme/charts', version: '1.0.0' }),
+    'src/index.ts': '',
+  })
+
+  const root = path.join(base, 'mono')
+  mkdirSync(path.join(root, 'apps', 'monolith'), { recursive: true })
+  git(root, ['init', '-q', '-b', 'main'])
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root' }))
+  writeFileSync(
+    path.join(root, 'turbo.json'),
+    JSON.stringify({ tasks: { build: {}, 'build:libs': { dependsOn: ['^build:libs', 'build'] } } })
+  )
+  writeFileSync(path.join(root, 'apps/monolith/package.json'), JSON.stringify({ name: 'mono' }))
+  writeFileSync(
+    path.join(root, 'apps/monolith/next.config.ts'),
+    `import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({}, {})\n`
+  )
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-qm', 'init'])
+
+  const app = await addModule(root, widget, {})
+  assert.equal(app.turbo, true)
+  // A package is a library: its build is what the monolith waits for.
+  const library = await addModule(root, charts, {})
+  assert.equal(library.turbo, false)
+
+  const { tasks } = JSON.parse(readFileSync(path.join(root, 'turbo.json'), 'utf8'))
+  assert.deepEqual(tasks['@acme/widget#build:libs'], { dependsOn: ['^build:libs'] })
+  assert.equal(tasks['@acme/charts#build:libs'], undefined)
+})
+
 test('an extracted module carries a workspace for the packages inside it', async () => {
   const root = grown({ at: 'packages/charts' })
   mkdirSync(path.join(root, 'packages/charts/docs'), { recursive: true })

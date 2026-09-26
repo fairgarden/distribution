@@ -53,6 +53,10 @@ Writes into `turbo.json` what builds the policy once for every service:
   since a fresh checkout has built neither the policy nor the tools that
   build it.
 
+A package that already has its own `build` or `dev` in `turbo.json` keeps it
+and only gains the policy — the monolith's, which waits for its apps'
+libraries rather than their builds, is one. Any other gets the generic task.
+
 With `--check`, changes nothing and exits 1 when `turbo.json` is out of date —
 for CI, and after adding a module.
 

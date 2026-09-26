@@ -210,3 +210,48 @@ test("a distribution has a place for the organization's policy, built once by tu
   const root = await scaffold(distributionRepo('@acme/core'))
   assert.match(readJson(root, 'apps/monolith/package.json').scripts.build, /^fg-dist policy use && next build$/)
 })
+
+test('a monolith repo runs the monolith, or each app on its own, and never the docs', async () => {
+  for (const files of [monolithRepo('@acme/core'), distributionRepo('@acme/core')]) {
+    const root = await scaffold(files)
+    const { scripts } = readJson(root, 'package.json')
+    assert.equal(scripts.dev, 'turbo run dev --filter=./apps/monolith')
+    assert.equal(scripts.build, 'turbo run build --filter=./apps/monolith')
+    for (const name of ['modular:dev', 'modular:build']) {
+      assert.match(scripts[name], /--filter='\.\/apps\/\*' --filter='!\.\/apps\/monolith'/)
+    }
+    for (const name of ['dev', 'build', 'modular:dev', 'modular:build']) {
+      assert.doesNotMatch(scripts[name], /docs/)
+    }
+    assert.match(scripts['docs:dev'], /'\.\/apps\/\*\/docs'.*'\.\/packages\/\*\/docs'/)
+    assert.match(readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8'), /- "apps\/\*\/docs"/)
+    // turbo refuses to filter on a directory that is not there
+    assert.equal(readFileSync(path.join(root, 'packages/.gitkeep'), 'utf8'), '')
+
+    // The monolith compiles its apps, so it waits for their libraries only.
+    const { tasks } = readJson(root, 'turbo.json')
+    assert.deepEqual(tasks['build:libs'], { dependsOn: ['^build:libs', 'build'] })
+    assert.deepEqual(tasks['@acme/core-monolith#build'].dependsOn, ['^build:libs'])
+    assert.deepEqual(tasks['@acme/core-monolith#dev'].dependsOn, ['^build:libs'])
+    assert.deepEqual(tasks.dev.dependsOn, ['^build'])
+    assert.equal(readJson(root, 'apps/monolith/package.json').name, '@acme/core-monolith')
+  }
+})
+
+test('a separate distribution runs every app, with no monolith to build for', async () => {
+  const root = await scaffold(distributionRepo('@acme/core', undefined, undefined, { monolith: false }))
+  const { scripts } = readJson(root, 'package.json')
+  assert.equal(scripts.dev, "turbo run dev --filter='./apps/*'")
+  assert.equal(scripts['modular:dev'], scripts.dev)
+  assert.equal(scripts.build, "turbo run build --filter='./apps/*'")
+  assert.equal(readJson(root, 'turbo.json').tasks['build:libs'], undefined)
+  for (const dir of ['apps', 'packages']) {
+    assert.equal(readFileSync(path.join(root, dir, '.gitkeep'), 'utf8'), '')
+  }
+})
+
+test('a module runs at a stable hostname on its own', async () => {
+  const pkg = readJson(await scaffold(moduleRepo('@acme/widget')), 'package.json')
+  assert.equal(pkg.scripts.dev, 'portless widget next dev')
+  assert.ok(pkg.devDependencies.portless)
+})
