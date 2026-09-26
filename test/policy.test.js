@@ -146,3 +146,39 @@ test('turbo builds it once, before each service whose build uses it', () => {
   const turbo = JSON.parse(readFileSync(path.join(root, 'turbo.json'), 'utf8'))
   assert.deepEqual(turbo.tasks.build, { dependsOn: ['^build'], outputs: ['.next/**'] })
 })
+
+test('a service whose tasks are already tuned keeps them, and only gains the policy', () => {
+  const root = distribution()
+  // A monolith, which waits for its apps' libraries rather than their builds.
+  const tuned = { dependsOn: ['^build:libs'], outputs: ['.next/**'] }
+  const tunedDev = { dependsOn: ['^build:libs'], persistent: true, cache: false }
+  write(root, {
+    'turbo.json': {
+      tasks: {
+        build: { dependsOn: ['^build'], outputs: ['.next/**'] },
+        '@acme/id#build': tuned,
+        '@acme/id#dev': tunedDev,
+      },
+    },
+  })
+  const policy = findPolicy(root)
+
+  assert.deepEqual(setupTurbo(policy, { check: true }), [
+    '@acme/core-policies#build',
+    '@acme/core-policies#test',
+    '@acme/id#build',
+    '@acme/id#dev',
+  ])
+  setupTurbo(policy)
+  assert.deepEqual(setupTurbo(policy, { check: true }), [])
+  const { tasks } = JSON.parse(readFileSync(path.join(root, 'turbo.json'), 'utf8'))
+  assert.deepEqual(tasks['@acme/id#build'], {
+    dependsOn: ['^build:libs', '@acme/core-policies#build'],
+    outputs: ['.next/**', '.policy/**'],
+  })
+  assert.deepEqual(tasks['@acme/id#dev'], {
+    dependsOn: ['^build:libs', '@acme/core-policies#build'],
+    persistent: true,
+    cache: false,
+  })
+})

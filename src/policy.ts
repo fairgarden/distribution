@@ -220,15 +220,24 @@ export const usePolicy = (project: string): { policy?: DistributionPolicy; statu
 
 type TurboTask = { dependsOn?: string[]; inputs?: string[]; outputs?: string[]; [key: string]: unknown }
 
+/** `list` with `entry` at the end, unless it has it already. */
+const including = (list: string[] | undefined, entry: string): string[] =>
+  list?.includes(entry) ? list : [...(list ?? []), entry]
+
 /**
  * What turbo needs, so the policy is built once however many services run
  * it: the policy's own tasks, which read every module's rules as well as its
  * own, and each project whose build uses it waiting for it to be built.
+ *
+ * A project's task is the generic one plus the policy, unless `existing`
+ * already has one for it: that is kept as it is — a monolith's waits for its
+ * apps' libraries rather than their builds, say — and only gains the policy.
  */
 export const turboTasks = (
   policy: DistributionPolicy,
   generic: TurboTask,
-  genericDev: TurboTask = { persistent: true, cache: false }
+  genericDev: TurboTask = { persistent: true, cache: false },
+  existing: Record<string, TurboTask> = {}
 ): Record<string, TurboTask> => {
   const name = readJson<PackageJson>(path.join(policy.dir, 'package.json')).name
   if (!name) throw new Error(`${path.join(POLICIES, 'package.json')} needs a name.`)
@@ -257,16 +266,18 @@ export const turboTasks = (
       const pkg = readJson<PackageJson>(file)
       if (!pkg.name) continue
       if (pkg.scripts?.build?.includes(USES)) {
+        const base = existing[`${pkg.name}#build`] ?? generic
         tasks[`${pkg.name}#build`] = {
-          ...generic,
-          dependsOn: [...(generic.dependsOn ?? []), `${name}#build`],
+          ...base,
+          dependsOn: including(base.dependsOn, `${name}#build`),
           // The copy it runs is part of what it built: a cached build brings it back.
-          outputs: [...(generic.outputs ?? []), `${path.dirname(USED)}/**`],
+          outputs: including(base.outputs, `${path.dirname(USED)}/**`),
         }
       }
       // A fresh checkout has built neither the policy nor the tools that build it.
       if (pkg.scripts?.dev?.includes(USES)) {
-        tasks[`${pkg.name}#dev`] = { ...genericDev, dependsOn: [...(genericDev.dependsOn ?? []), `${name}#build`] }
+        const base = existing[`${pkg.name}#dev`] ?? genericDev
+        tasks[`${pkg.name}#dev`] = { ...base, dependsOn: including(base.dependsOn, `${name}#build`) }
       }
     }
   }
@@ -281,7 +292,7 @@ export const setupTurbo = (policy: DistributionPolicy, { check = false } = {}): 
   const file = path.join(policy.root, 'turbo.json')
   const turbo = readJson<{ tasks?: Record<string, TurboTask> }>(file)
   const tasks = turbo.tasks ?? {}
-  const wanted = turboTasks(policy, tasks.build ?? { dependsOn: ['^build'] }, tasks.dev)
+  const wanted = turboTasks(policy, tasks.build ?? { dependsOn: ['^build'] }, tasks.dev, tasks)
   const differ = Object.keys(wanted).filter((key) => JSON.stringify(tasks[key]) !== JSON.stringify(wanted[key]))
   if (!check && differ.length > 0) {
     turbo.tasks = { ...tasks, ...wanted }
