@@ -69,7 +69,11 @@ pnpm dist env setup
 Adds what each project is missing, and nothing it has:
 
 - A secret an app generates is made here, 32 random bytes, and set alike in
-  every project that shares it — matching one already set, where one is.
+  every project that shares it. Every secret is sensitive: once set, only a
+  deployment can read it — not setup, not rotation, not anyone on the team.
+- Where one side of a shared secret is set already, its value cannot be read to
+  match. Both sides move to a new value in their next slot instead, and the
+  side that had one goes on accepting it.
 - A value the app fixes is set as it says.
 - Anything else is asked for, when there is someone to ask; otherwise it is
   listed, and setup fails.
@@ -85,11 +89,13 @@ standard input, never as arguments any other process could read.
 pnpm dist env rotate
 ```
 
-Every generated secret an app marks rotatable holds a list, newest first, and
-the app accepts all of it: it signs and sends with the first, and takes any.
-Rotating puts a new value first and keeps the one before; the one before that
-is dropped. So a session sealed, or a sign-in begun, just before a rotation
-still works after it — until the next one.
+A secret is never read back, so rotating cannot keep the old value by reading
+it. A rotated secret has two slots instead, `NAME_A` and `NAME_B`, both
+sensitive, and `NAME_CURRENT` — a letter, and no secret — says which is in use.
+The app signs and sends with that one and accepts both. Rotating writes a new
+value into the other slot, over the one from two rotations ago, then points at
+it. So a session sealed, or a sign-in begun, just before a rotation still works
+after it — until the next one.
 
 A secret two apps share is rotated where it is checked first, and redeployed,
 before what sends it: then there is no moment one side has a value the other
@@ -97,12 +103,12 @@ does not. In a monolith both apps read the one variable, so one redeploy does.
 Production is redeployed after each step — the deployment serving it now, so an
 instant rollback is kept, not undone.
 
-Rotating keeps the current value, so a rotated secret is stored readable rather
-than sensitive; everything else a secret is sensitive. A team that enforces
-sensitive variables for Production and Preview (Team Settings → Security &
-Privacy) stores them sensitive anyway, and then they cannot be rotated without
-signing people out: setup checks what it stored, and says so. Name variables to rotate
-only those, and the ones tied to them.
+Which slot is in use is read from the pointer; where a team policy makes every
+variable sensitive (Team Settings → Security & Privacy), even that, it is the
+slot set most recently, which Vercel says of any variable. A secret set by hand
+as plain `NAME` is still accepted beside the slots the first rotation starts,
+and the next one removes it. Name variables to rotate only those, and the ones
+tied to them.
 
 A session sealed with a value lasts until the second rotation after it, so
 rotate less often than a session lasts, or people are signed out. Members'
@@ -133,9 +139,9 @@ Under `fairgarden.env` in its `package.json`:
 | --- | --- |
 | `description` | what it is for, shown to whoever has to set it |
 | `required` | `deployed` — any deployment — or `production` alone; otherwise optional |
-| `sensitive` | a secret nobody should read back |
+| `sensitive` | a secret nobody should read back; every generated one is too |
 | `generate` | `secret`: `setup` makes it, and `rotate` can replace it |
-| `rotate` | a list, newest first, that the app accepts all of |
+| `rotate` | kept in two slots and a pointer, which the app reads with `@fairgarden/distribution/secrets` |
 | `value` | what it is set to; nothing to ask |
 | `example` | shown when it is asked for |
 | `unless` | not needed when any of these variables is set |

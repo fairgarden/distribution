@@ -23,7 +23,6 @@ import {
   planRotation,
   planSetup,
   remotesOf,
-  SENSITIVE_POLICY,
 } from './env-vercel.ts'
 import { writeRotationWorkflow } from './workflows.ts'
 import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
@@ -1806,36 +1805,26 @@ const envCommand = async (args: Args): Promise<number> => {
           { hidden: Boolean(requirement.declaration.sensitive) }
         ),
     })
-    const width = pad(plan.planned.map((each) => each.variable))
-    for (const { remote, variable, source, sensitive } of plan.planned) {
-      process.stdout.write(
-        `${remote.target.project}  ${variable.padEnd(width)}  ${source}${sensitive ? ', sensitive' : ''}\n`
-      )
+    const width = pad(plan.notes.map((each) => each.variable))
+    for (const { remote, variable, source } of plan.notes) {
+      process.stdout.write(`${remote.target.project}  ${variable.padEnd(width)}  ${source}\n`)
     }
-    if (plan.planned.length === 0 && plan.unresolved.length === 0) {
+    if (plan.writes.length === 0 && plan.unresolved.length === 0) {
       process.stdout.write(`Every project has what ${environment} needs.\n`)
       return 0
     }
-    let forced: ReturnType<typeof applySetup> = []
-    if (!args.dryRun && plan.planned.length > 0) {
-      forced = applySetup(plan, environment)
-      process.stdout.write(`Added ${plan.planned.length} to ${environment}. They apply from the next deployment.\n`)
-      if (forced.length > 0) {
-        process.stderr.write(
-          `\nVercel stored these as sensitive although they were added readable, so they cannot be rotated:\n` +
-            forced.map(({ remote, variable }) => `  ${remote.target.project}  ${variable}\n`).join('') +
-            `That is ${SENSITIVE_POLICY}. Rotating keeps the value before the new one, which means reading it ` +
-            'back. Turn the policy off, remove these, and run setup again; or rotate them by hand, and accept that ' +
-            'sessions and sign-ins under way at the time end.\n'
-        )
-      }
+    if (!args.dryRun && plan.writes.length > 0) {
+      applySetup(plan, environment)
+      process.stdout.write(
+        `Set ${plan.writes.length} variables in ${environment}, every secret sensitive. They apply from the next deployment.\n`
+      )
     } else if (args.dryRun) {
-      process.stdout.write('Dry run: nothing added.\n')
+      process.stdout.write('Dry run: nothing set.\n')
     }
     for (const { remote, requirement, why } of plan.unresolved) {
       process.stderr.write(`${remote.target.project}  ${requirement.variable}: ${why}.\n`)
     }
-    return plan.unresolved.length > 0 || forced.length > 0 ? 1 : 0
+    return plan.unresolved.length > 0 ? 1 : 0
   }
 
   if (action === 'rotate') {

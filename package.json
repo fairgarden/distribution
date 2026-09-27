@@ -21,6 +21,10 @@
     "./migrations": {
       "types": "./dist/migrations.d.ts",
       "default": "./dist/migrations.js"
+    },
+    "./secrets": {
+      "types": "./dist/secrets.d.ts",
+      "default": "./dist/secrets.js"
     }
   },
   "bin": {

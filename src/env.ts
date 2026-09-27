@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { declaredMigrations, type Migrations } from './migrations.ts'
+import { slotVariable } from './secrets.ts'
 import { packageDir } from './packages.ts'
 import { submodules } from './submodules.ts'
 
@@ -31,10 +32,10 @@ export interface EnvDeclaration {
   /** A random value, which `setup` makes and `rotate` replaces. */
   generate?: 'secret'
   /**
-   * A list, newest first, every value of which the app accepts: rotated by
-   * putting a new one first and keeping the one before, so nothing signed or
-   * sent with it fails during the switch. Kept readable, since rotating it
-   * keeps its current value.
+   * Kept in two slots, `NAME_A` and `NAME_B`, with `NAME_CURRENT` saying which
+   * is in use (see secrets.ts): the app accepts both, so rotating one — a new
+   * value in the other slot, never reading the old — fails nothing signed or
+   * sent with it during the switch.
    */
   rotate?: boolean
   /** What it is set to: there is nothing to ask. */
@@ -66,10 +67,12 @@ export interface Deployment {
 }
 
 export interface Requirement {
-  /** The variable to set: the first of `anyOf`. */
+  /** The variable to set: the first of `anyOf`, or a rotated secret's name. */
   variable: string
   /** Any of these does. */
   anyOf: string[]
+  /** An app's database, which is connected rather than set. */
+  database?: boolean
   /** The apps that need it. */
   apps: string[]
   declaration: EnvDeclaration
@@ -102,9 +105,6 @@ export const envApp = (root: string): EnvApp | undefined => {
       throw wrong('"required" is neither deployed nor production')
     }
     if (declaration.rotate && !declaration.generate) throw wrong('only a generated secret can be rotated')
-    if (declaration.rotate && declaration.sensitive) {
-      throw wrong('a rotated secret cannot be sensitive: rotating it keeps its current value, which has to be readable')
-    }
     if (declaration.sameAs && !VARIABLE.test(declaration.sameAs)) throw wrong('"sameAs" is not a variable name')
   }
   return { name, root, env, migrations }
@@ -173,8 +173,10 @@ export const requirementsFor = (
       // Mounted beside that package in this deployment, the app works it out.
       if (declaration.unlessMounted && here.has(app.name) && here.has(declaration.unlessMounted)) continue
       const known = found.get(variable)
+      // A rotated secret is set by hand, or in either slot.
+      const anyOf = declaration.rotate ? [variable, slotVariable(variable, 'A'), slotVariable(variable, 'B')] : [variable]
       if (known) known.apps.push(app.name)
-      else found.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
+      else found.set(variable, { variable, anyOf, apps: [app.name], declaration })
     }
   }
 
@@ -190,6 +192,7 @@ export const requirementsFor = (
     found.set(key, {
       variable: app.migrations.database[0],
       anyOf: app.migrations.database,
+      database: true,
       apps: [app.name],
       declaration: {
         description: 'Its database. Connecting Neon to the project sets DATABASE_URL.',
@@ -216,7 +219,7 @@ export const missing = (requirements: Requirement[], env: Env): Requirement[] =>
 /** What to do about one missing variable, in words for a build log. */
 const howToSet = (requirement: Requirement): string => {
   const { declaration } = requirement
-  if (requirement.anyOf.length > 1) return `Or any of ${requirement.anyOf.slice(1).join(', ')}.`
+  if (requirement.database && requirement.anyOf.length > 1) return `Or any of ${requirement.anyOf.slice(1).join(', ')}.`
   if (declaration.value !== undefined) return `Set it to ${declaration.value}.`
   if (declaration.sameAs) return `The same value as ${declaration.sameAs}: \`pnpm dist env setup\` sets both.`
   if (declaration.generate) return 'A long random value: `pnpm dist env setup` makes one.'

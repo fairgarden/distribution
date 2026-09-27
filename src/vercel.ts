@@ -19,6 +19,8 @@ export interface VercelVariable {
   /** Undefined for a sensitive variable, which cannot be read back. */
   value: string | undefined
   type: string
+  /** When it was last set, which Vercel says even of a sensitive variable. */
+  updatedAt: number
 }
 
 export class VercelError extends Error {}
@@ -49,13 +51,25 @@ const run = (target: VercelProject, args: string[], input?: string): string => {
 export const listVariables = (target: VercelProject, environment: string): Map<string, VercelVariable> => {
   const out = run(target, ['env', 'list', environment, '--project', target.project, '--json'])
   const { envs } = JSON.parse(out) as {
-    envs: Array<{ key: string; value?: string; type: string; target?: string[] | string; gitBranch?: string }>
+    envs: Array<{
+      key: string
+      value?: string
+      type: string
+      target?: string[] | string
+      gitBranch?: string
+      updatedAt?: number
+      createdAt?: number
+    }>
   }
   const found = new Map<string, VercelVariable>()
   for (const variable of envs) {
     const targets = Array.isArray(variable.target) ? variable.target : [variable.target]
     if (variable.gitBranch || !targets.includes(environment)) continue
-    found.set(variable.key, { value: variable.value, type: variable.type })
+    found.set(variable.key, {
+      value: variable.value,
+      type: variable.type,
+      updatedAt: variable.updatedAt ?? variable.createdAt ?? 0,
+    })
   }
   return found
 }
@@ -76,6 +90,22 @@ export const addVariable = (
 
 export const updateVariable = (target: VercelProject, name: string, environment: string, value: string): void => {
   run(target, ['env', 'update', name, environment, '--project', target.project, '--yes'], value)
+}
+
+/** Set it, whether it is there or not; `exists` says which, from a listing. */
+export const setVariable = (
+  target: VercelProject,
+  name: string,
+  environment: string,
+  value: string,
+  { sensitive, exists }: { sensitive: boolean; exists: boolean }
+): void => {
+  if (exists) updateVariable(target, name, environment, value)
+  else addVariable(target, name, environment, value, { sensitive })
+}
+
+export const removeVariable = (target: VercelProject, name: string, environment: string): void => {
+  run(target, ['env', 'remove', name, environment, '--project', target.project, '--yes'])
 }
 
 /**

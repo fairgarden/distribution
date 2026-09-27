@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { deploymentAt, envApp, missing, requirementsFor } from '../dist/env.js'
 import { remotesOf } from '../dist/env-vercel.js'
+import { secretValues } from '../dist/secrets.js'
 
 process.env.GIT_CONFIG_COUNT = '1'
 process.env.GIT_CONFIG_KEY_0 = 'commit.gpgsign'
@@ -104,10 +105,16 @@ const distribution = ({ monolith }) => {
  * A stand-in for the Vercel CLI: projects' variables in a JSON file, and every
  * call it was given in a log.
  */
+/**
+ * A stand-in for the Vercel CLI: projects' variables in a JSON file, and every
+ * call it was given in a log. Like Vercel, it never shows a sensitive value, and
+ * says when each variable was set; `policy: 'sensitive'` stores everything
+ * sensitive, as a team policy does.
+ */
 const fakeVercel = (projects = {}, { policy } = {}) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vercel-'))
   const state = path.join(dir, 'state.json')
-  json(state, { projects, policy, log: [] })
+  json(state, { projects, policy, clock: 1, log: [] })
   const bin = path.join(dir, 'vercel')
   writeFileSync(
     bin,
@@ -123,14 +130,17 @@ const project = () => (state.projects[flag('--project')] ??= {})
 const [command, sub, name, environment] = args
 if (command === 'env' && sub === 'list') {
   const envs = Object.entries(project()).flatMap(([key, targets]) =>
-    targets[name] ? [{ key, value: targets[name].sensitive ? undefined : targets[name].value, type: targets[name].sensitive ? 'sensitive' : 'encrypted', target: [name] }] : [])
+    targets[name] ? [{ key, value: targets[name].sensitive ? undefined : targets[name].value, type: targets[name].sensitive ? 'sensitive' : 'encrypted', target: [name], updatedAt: targets[name].updatedAt }] : [])
   process.stdout.write(JSON.stringify({ envs }))
 } else if (command === 'env' && (sub === 'add' || sub === 'update')) {
   const variable = (project()[name] ??= {})
   if (sub === 'add' && variable[environment]) { process.stderr.write('exists'); process.exit(1) }
-  // A team policy stores Production and Preview sensitive, whatever the CLI asks for.
+  if (sub === 'update' && !variable[environment]) { process.stderr.write('missing'); process.exit(1) }
   const forced = state.policy === 'sensitive' && environment !== 'development'
-  variable[environment] = { value: stdin(), sensitive: forced || (sub === 'add' ? args.includes('--sensitive') : variable[environment].sensitive) }
+  const sensitive = forced || (sub === 'add' ? args.includes('--sensitive') : variable[environment].sensitive)
+  variable[environment] = { value: stdin(), sensitive, updatedAt: state.clock++ }
+} else if (command === 'env' && sub === 'remove') {
+  delete project()[name]?.[environment]
 } else if (command === 'api') {
   const id = decodeURIComponent(sub.split('/').pop())
   process.stdout.write(JSON.stringify({ targets: { production: { id: 'dpl_' + id } } }))
@@ -141,10 +151,22 @@ save()
 `
   )
   chmodSync(bin, 0o755)
+  const read = () => JSON.parse(readFileSync(state, 'utf8'))
   return {
     bin,
-    read: () => JSON.parse(readFileSync(state, 'utf8')),
-    value: (project, key, environment = 'production') => JSON.parse(readFileSync(state, 'utf8')).projects[project]?.[key]?.[environment],
+    read,
+    // What the test can see and the tool never can.
+    value: (project, key, environment = 'production') => read().projects[project]?.[key]?.[environment],
+    /** A secret's values as the app reads them, newest first. */
+    secret: (project, name, environment = 'production') =>
+      secretValues(
+        name,
+        Object.fromEntries(
+          Object.entries(read().projects[project] ?? {}).flatMap(([key, targets]) =>
+            targets[environment] ? [[key, targets[environment].value]] : []
+          )
+        )
+      ),
   }
 }
 
@@ -231,18 +253,20 @@ describe('the build', () => {
 })
 
 describe('setting up Vercel', () => {
-  test('generates the secrets, sets fixed values, and says what it cannot know', async () => {
+  test('generates the secrets into their first slot, sensitive, and says what it cannot know', async () => {
     const root = distribution({ monolith: false })
     const vercel = fakeVercel()
     const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
     assert.equal(result.status, 1, result.stderr)
 
+    const slot = vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET_A')
+    assert.equal(slot.sensitive, true)
+    assert.ok(slot.value.length >= 40)
+    // the pointer is only a letter, and readable
+    assert.deepEqual(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET_CURRENT').value, 'A')
     // one value, set alike in both projects: members signs in with what id checks
-    const shared = vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
-    assert.ok(shared.value.length >= 40)
-    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET').value, shared.value)
-    // rotated secrets stay readable, so rotating can keep the one before
-    assert.equal(shared.sensitive, false)
+    assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [slot.value])
+    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_SECRET_A').sensitive, true)
     assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_CLAIMS').value, 'membership')
 
     assert.match(result.stderr, /acme-id {2}ACME_ID_SMTP_URL: nothing to set it to/)
@@ -250,16 +274,20 @@ describe('setting up Vercel', () => {
     assert.match(result.stderr, /acme-members {2}ACME_MEMBERS_ID_URL: nothing to set it to/)
   })
 
-  test('will not guess a shared secret the other side keeps unreadable', async () => {
+  test('fills in a shared secret one side has by moving both to a new one, reading neither', async () => {
     const root = distribution({ monolith: false })
-    const vercel = fakeVercel({ 'acme-id': { ACME_ID_SERVICE_MEMBERS_SECRET: { production: { value: 'hidden', sensitive: true } } } })
-    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
-    assert.equal(result.status, 1)
-    assert.match(
-      result.stderr,
-      /ACME_MEMBERS_CLIENT_SECRET: it has to match ACME_ID_SERVICE_MEMBERS_SECRET, which is sensitive in acme-id/
-    )
-    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), undefined)
+    const vercel = fakeVercel({
+      'acme-id': {
+        ACME_ID_SERVICE_MEMBERS_SECRET_A: { production: { value: 'unseen', sensitive: true, updatedAt: 0 } },
+        ACME_ID_SERVICE_MEMBERS_SECRET_CURRENT: { production: { value: 'A', sensitive: false, updatedAt: 0 } },
+      },
+    })
+    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    const [fresh, kept] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
+    // id takes the new one and still accepts what it had; members sends the new one
+    assert.equal(kept, 'unseen')
+    assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [fresh])
+    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET_CURRENT').value, 'B')
   })
 
   test('a dry run keeps nothing, not even a project it was told', async () => {
@@ -279,46 +307,31 @@ describe('setting up Vercel', () => {
     }
     assert.equal(readFileSync(manifest, 'utf8'), before)
   })
-
-  test("says so when a team policy stores what has to stay readable as sensitive", async () => {
-    const root = distribution({ monolith: true })
-    const vercel = fakeVercel({}, { policy: 'sensitive' })
-    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
-    assert.equal(result.status, 1)
-    assert.match(result.stderr, /stored these as sensitive although they were added readable, so they cannot be rotated:\n {2}acme-core {2}ACME_MEMBERS_SECRET/)
-    assert.match(result.stderr, /Team Settings → Security & Privacy/)
-    // and rotating says why, rather than send them round in a circle
-    const rotate = await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
-    assert.notEqual(rotate.status, 0)
-    assert.match(rotate.stderr, /turn that off first/)
-  })
-
-  test('matches a shared secret one side already has', async () => {
-    const root = distribution({ monolith: false })
-    const vercel = fakeVercel({ 'acme-id': { ACME_ID_SERVICE_MEMBERS_SECRET: { production: { value: 'existing', sensitive: false } } } })
-    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
-    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET').value, 'existing')
-  })
 })
 
 describe('rotating', () => {
-  const setUp = async (monolith) => {
+  const setUp = async (monolith, options) => {
     const root = distribution({ monolith })
-    const vercel = fakeVercel()
+    const vercel = fakeVercel({}, options)
     await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
     vercel.before = vercel.read()
     return { root, vercel }
   }
 
-  test('checks before it sends: id takes the new secret before members sends it', async () => {
+  test('checks before it sends, and never reads a secret to do it', async () => {
     const { root, vercel } = await setUp(false)
-    const old = vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET').value
+    const [old] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
     const result = await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
     assert.equal(result.status, 0, result.stderr)
 
-    const [fresh, kept] = vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET').value.split(' ')
+    // id checks the new one and the old; members sends the new one
+    const [fresh, kept] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
     assert.equal(kept, old)
-    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET').value.split(' ')[0], fresh)
+    assert.notEqual(fresh, old)
+    assert.equal(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET')[0], fresh)
+    // the new value went into the other slot, sensitive, and the pointer moved to it
+    assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET_B').sensitive, true)
+    assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET_CURRENT').value, 'B')
 
     const log = vercel.read().log.slice(vercel.before.log.length)
     const step = (entry) => {
@@ -327,22 +340,48 @@ describe('rotating', () => {
       return at
     }
     // what checks it is redeployed with both before anything sends the new one
-    assert.ok(step('env update ACME_ID_SERVICE_MEMBERS_SECRET') < step('redeploy dpl_acme-id'))
-    assert.ok(step('redeploy dpl_acme-id') < step('env update ACME_MEMBERS_CLIENT_SECRET'))
-    assert.ok(step('env update ACME_MEMBERS_CLIENT_SECRET') < log.lastIndexOf('redeploy dpl_acme-members production'))
+    assert.ok(step('env add ACME_ID_SERVICE_MEMBERS_SECRET_B') < step('redeploy dpl_acme-id'))
+    assert.ok(step('redeploy dpl_acme-id') < step('env add ACME_MEMBERS_CLIENT_SECRET_B'))
+    // and each value before the pointer at it
+    assert.ok(step('env add ACME_MEMBERS_CLIENT_SECRET_B') < step('env update ACME_MEMBERS_CLIENT_SECRET_CURRENT'))
     // members' own session key waits for its client secret: one redeploy for both
     assert.equal(log.filter((line) => line.startsWith('redeploy dpl_acme-members')).length, 1)
-    assert.ok(step('env update ACME_MEMBERS_SECRET') > step('redeploy dpl_acme-id'))
   })
 
   test('keeps one value before the new one, and drops the rest', async () => {
     const { root, vercel } = await setUp(true)
     await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
-    const second = vercel.value('acme-core', 'ACME_MEMBERS_SECRET').value.split(' ')
+    const second = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
     await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
-    const third = vercel.value('acme-core', 'ACME_MEMBERS_SECRET').value.split(' ')
+    const third = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
     assert.equal(third.length, 2)
     assert.equal(third[1], second[0])
+    assert.ok(!third.includes(second[1]))
+  })
+
+  test('finds the slot in use from when each was set, where a team policy hides even the pointer', async () => {
+    const { root, vercel } = await setUp(true, { policy: 'sensitive' })
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').sensitive, true)
+    for (const expected of ['B', 'A', 'B']) {
+      const result = await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, expected)
+      assert.equal(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').length, 2)
+    }
+  })
+
+  test('takes a secret set by hand into its slots, keeping it for one rotation', async () => {
+    const root = distribution({ monolith: true })
+    const vercel = fakeVercel({
+      'acme-core': { ACME_MEMBERS_SECRET: { production: { value: 'by-hand', sensitive: true, updatedAt: 0 } } },
+    })
+    await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    const first = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
+    assert.equal(first.length, 2)
+    assert.equal(first[1], 'by-hand')
+    await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET'), undefined)
+    assert.ok(!vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').includes('by-hand'))
   })
 
   test('asks first, and without anyone to ask, does nothing', async () => {
