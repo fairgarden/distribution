@@ -99,6 +99,8 @@ export interface ModuleVersion {
   released: boolean
   /** Where the repository can be browsed, when it has a web address. */
   url: string | undefined
+  /** For a fork, where the repository it was forked from can be browsed, or its url. */
+  upstream: string | undefined
   /** What the module is, from its own package.json. */
   description: string | undefined
 }
@@ -172,6 +174,7 @@ const readManifest = async (
       tag: state.current,
       released: state.exact,
       url: browsableAt(submodule.url),
+      upstream: submodule.upstream && (browsableAt(submodule.upstream) ?? submodule.upstream),
     }
   } catch {
     return undefined
@@ -188,7 +191,11 @@ const modulesTable = (modules: ModuleVersion[]): string => {
       // An empty cell is honest: it shows which modules have yet to say what
       // they are, rather than hiding it.
       const what = module.description ? `<br>${module.description}` : ''
-      return `| ${name}${what} | ${module.version} | ${pinnedAs(module)} | \`${module.relativePath}\` |`
+      // A fork is shipped from somewhere other than where the module lives.
+      const fork = module.upstream
+        ? `<br>Fork of ${/^https?:/.test(module.upstream) ? link(module.upstream.replace(/^https?:\/\//, ''), module.upstream) : module.upstream}`
+        : ''
+      return `| ${name}${what}${fork} | ${module.version} | ${pinnedAs(module)} | \`${module.relativePath}\` |`
     }),
   ]
 

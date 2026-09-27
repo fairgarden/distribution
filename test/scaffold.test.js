@@ -185,7 +185,10 @@ test('a distribution can have no monolith, for apps deployed separately', async 
 
 test('a distribution is versioned by date, not semver', async () => {
   const root = await scaffold(distributionRepo('@acme/core'))
-  assert.match(readJson(root, 'package.json').version, /^\d{4}\.\d{2}\.\d{2}$/)
+  const { version } = readJson(root, 'package.json')
+  assert.match(version, /^\d{4}\.\d{1,2}\.\d{1,2}$/)
+  // and one npm publishes as it is
+  assert.equal(version.split('.').some((part) => part.startsWith('0')), false)
 })
 
 test('a distribution records what it extends', async () => {

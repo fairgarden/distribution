@@ -7,14 +7,29 @@ would mean shipping a regression.
 ```json
 {
   "name": "@acme/core",
-  "version": "2024.12.01",
-  "dependencies": { "@fairgarden/core": "2024.06.01" },
+  "version": "2024.12.1",
+  "dependencies": { "@fairgarden/core": "2024.6.1" },
   "distribution": { "extends": "@fairgarden/core" }
 }
 ```
 
 The parent is an ordinary dependency, so whatever version is installed is the
 one being extended.
+
+## Starting one
+
+```bash
+fg-dist init distribution acme --name @acme/core --extends @fairgarden/core
+cd acme && pnpm install
+fg-dist inherit
+```
+
+[`inherit`](/commands/inherit) adds every module the parent ships, where the
+parent has it, at the commit the parent pins — so an extension starts out
+shipping exactly its parent. From there it adds its own with
+[`add-module`](/commands/add-module), moves ahead with [`bump`](/commands/bump),
+and changes what it inherited by [forking it](/overview/forking). When the
+parent starts shipping something new, `check` fails until `inherit` adds it.
 
 ## The floor
 
@@ -45,6 +60,30 @@ An extension may move ahead of what it extends, never behind it.
 
 A distribution whose apps [deploy separately](/overview/deploying) has no
 monolith build to fail, so `check` is the one that matters there.
+
+## Publishing a distribution
+
+An extension reads its parent from npm, so a distribution others extend
+publishes itself:
+
+```bash
+fg-dist workflows --distribution   # once: the publish workflow, and public on npm
+fg-dist release                    # version it by today's date, then run the workflow
+```
+
+What it publishes is its manifest — recording each module's version, place,
+repository and commit, see
+[Published distributions](/overview/versioning#published-distributions) — and
+its `policies/`, which an extension's policy is built on. Every push to main
+publishes a canary.
+
+## Forks
+
+A parent that ships a fork publishes the fork, and the extension inherits the
+same fork. An extension can fork any module too, to fix it before its parent or
+upstream does. The floor compares versions, so a fork keeps up with a parent
+that moves ahead by taking upstream's releases: `bump` merges them in. See
+[Forking a module](/overview/forking).
 
 ## What it is for
 

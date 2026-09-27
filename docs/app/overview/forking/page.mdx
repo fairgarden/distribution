@@ -1,0 +1,89 @@
+# Forking a module
+
+A distribution can fix a module it ships without waiting for upstream: fork
+the module, ship the fix, offer it upstream, and go back to upstream once it
+has the fix — or keep the fork.
+
+```bash
+fg-dist fork id https://github.com/acme/id.git   # check it out from your fork
+cd apps/id && git switch -c fix-login            # make the change on a branch
+git commit -am "Fix the login redirect"
+fg-dist contribute id                            # push it, open a pull request upstream
+git add .gitmodules apps/id && git commit        # ship it meanwhile
+
+fg-dist sync                                     # later: has upstream taken it?
+fg-dist unfork id                                # go back to the release that has it
+```
+
+## What a fork is
+
+The module checked out from a repository you can push to, with the one it came
+from recorded beside it in `.gitmodules`:
+
+```ini
+[submodule "apps/id"]
+	path = apps/id
+	url = https://github.com/acme/id.git
+	upstream = https://github.com/fairgarden/id.git
+```
+
+Git ignores `upstream`; `fg-dist` reads it. Every clone gets the fork as
+`origin`, and `fg-dist` adds `upstream` as a remote of the checkout whenever it
+needs it. The fork itself has to exist first — on GitHub, the Fork button — and
+[`fork`](/commands/fork) refuses a url it cannot read.
+
+## Pins outlive pull requests
+
+Everything the distribution pins in the fork is pushed to a branch named after
+the distribution — `acme-core`, for `@acme/core`. `fork` puts the pinned commit
+there, `contribute` moves it up to what it offered, and `bump` pushes its
+merges there. The pull request has a branch of its own, and GitHub deletes that
+once it is merged; a pin that lived only there would stop being fetchable, and
+every build of that commit with it.
+
+[`sync`](/commands/sync) reports any module pinned at a commit its remote does
+not have, fork or not: that is a build host failing to clone it.
+
+## Keeping up
+
+A fork takes releases from upstream. `sync` fetches upstream's tags as well as
+the fork's, so its upgrades are upstream's versions, and
+[`bump`](/commands/bump) takes them the same way as for any module — except
+that, where the fork has work of its own, the release is merged in and pushed:
+
+```
+apps/id  v1.2.0 -> v1.3.0  (fork: merged, pushed to acme-core)
+```
+
+A merge rather than a rebase, so every commit an older distribution pinned
+stays in the fork. A merge that conflicts stops, and says how to do it by hand.
+Afterwards the fork's version is the release's, which is what
+[an extension's floor](/overview/extending) compares.
+
+## Going back
+
+`sync` says when upstream has everything the fork adds:
+
+```
+apps/id  v1.2.0+  -> v1.2.1 (patch)  fork of github.com/fairgarden/id, all in upstream v1.2.1
+```
+
+"Everything" is checked by merging the fork into the release without touching
+anything: when nothing is left over, nothing would be lost — however upstream
+took it, merged, rebased or squashed.
+
+[`unfork`](/commands/unfork) then checks the module out from upstream again, at
+the oldest release from the pinned one on that has it all. It refuses while
+upstream is missing something, unless you name what to go back to and pass
+`--force`. The fork repository is left as it is.
+
+Or keep the fork. Nothing requires going back: a fork with changes upstream will
+not take is a fork you maintain, and `bump` keeps it current.
+
+## In an extension
+
+A distribution that ships a fork [publishes](/overview/extending#publishing-a-distribution)
+the fork's repository and its upstream, and [`inherit`](/commands/inherit) gives
+an extension the same fork. An extension can fork any module it inherited, too.
+The floor compares versions, so a fork keeps up with a parent that moves ahead
+by taking upstream's releases with `bump`.

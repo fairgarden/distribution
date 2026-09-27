@@ -1,7 +1,7 @@
 # `workflows`
 
 ```bash
-fg-dist workflows [--force]
+fg-dist workflows [--force] [--distribution]
 ```
 
 Gives every module a publishing workflow, so each one can release itself.
@@ -18,6 +18,19 @@ packages/design  has one already
 A module that already has a workflow is left alone. It may have been changed on
 purpose, and overwriting it would be the kind of help nobody asked for. Pass
 `--force` to replace them.
+
+## The distribution itself
+
+`--distribution` gives the distribution its own publishing workflow instead, so
+others can [extend it](/overview/extending#publishing-a-distribution). Asked for
+rather than done with the modules, because it takes `private` off the
+distribution and makes it public on npm.
+
+It is the same shape — a canary on every push to main, a release by hand — with
+two differences: the checkout includes the submodules, since what is published
+records every module's version, place, repository and commit; and nothing is
+built, since what a distribution publishes is its manifest and its policy.
+`files` is set to `policies`.
 
 ## What it writes
 

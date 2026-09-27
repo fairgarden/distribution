@@ -5,13 +5,14 @@ import { mkdir } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
-import { writeWorkflows } from './workflows.ts'
+import { writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
   checkReleasable,
   planRelease,
   readRelease,
   release,
+  releaseDistribution,
   reportToActions as reportRelease,
   startPrerelease,
   type Bump,
@@ -26,9 +27,14 @@ import {
   write,
 } from './scaffold.ts'
 import { describeViolations, inspectExtends } from './extends.ts'
+import { contribute, forkModule, integrate, unforkModule } from './forks.ts'
+import { inherit } from './inherit.ts'
 import { buildPolicy, findPolicy, POLICIES, setupTurbo, testPolicy, usePolicy } from './policy.ts'
+import { stampModules } from './manifest.ts'
 import {
+  containsAll,
   inspect,
+  isDistribution,
   isPublic,
   moveTo,
   repositoryRoot,
@@ -54,14 +60,18 @@ Commands:
   extract <path>       Turn a directory here into its own repository and submodule
   use-https [name...]  Rewrite submodule urls from ssh to https
   readme               Record versions in the readmes; run in a distribution or a module
-  workflows            Give every module a publishing workflow
+  workflows            Give every module a publishing workflow; --distribution, this one
   overrides            Point the workspace at this distribution's own checkouts
   canary               Stamp a canary version into the manifest, for CI
   release              Move a module on from the release it just published
   prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
+  inherit              Add the modules the distribution this extends ships, and this does not
   sync                 Report which modules have newer versions available
-  bump [name...]       Move modules to their newest non-major version
+  bump [name...]       Move modules to their newest non-major version; a fork merges it
+  fork <name> <url>    Check a module out from your fork, keeping where it came from
+  contribute <name>    Push the module's branch and open a pull request upstream
+  unfork <name>        Go back to the upstream a fork came from, once it has the fork's work
   policy build         Build the organization's policy: policies/, on every module's own
   policy test          Test each module's rules, then the organization's on top of them
   policy use           Put the built policy beside this service, for it to run
@@ -87,7 +97,10 @@ Options:
   --no-verify          Skip checking whether the https urls can be cloned
   --no-tag             Do not tag the extracted module with its declared version
   --force              Overwrite workflows that are already there (workflows)
-  --no-push            Leave the release branches local, and open no pull request
+  --distribution       Publish the distribution itself, for others to extend (workflows)
+  --no-push            Push nothing and open no pull request (release, fork, contribute, bump)
+  --to <ref>           Upstream tag, branch or commit to go back to (unfork)
+  --base <branch>      Branch the pull request goes into (contribute)
   --out <file>         Where policy build writes the bundle (default: policies/dist/)
 `
 
@@ -113,6 +126,9 @@ interface Args {
   bump: 'patch' | 'minor' | 'major' | undefined
   id: string | undefined
   out: string | undefined
+  to: string | undefined
+  base: string | undefined
+  distribution: boolean
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -138,6 +154,9 @@ const parseArgs = (argv: string[]): Args => {
     bump: undefined,
     id: undefined,
     out: undefined,
+    to: undefined,
+    base: undefined,
+    distribution: false,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -181,6 +200,12 @@ const parseArgs = (argv: string[]): Args => {
       args.force = true
     } else if (arg === '--no-push') {
       args.push = false
+    } else if (arg === '--distribution') {
+      args.distribution = true
+    } else if (arg === '--to') {
+      args.to = argv[++index]
+    } else if (arg === '--base') {
+      args.base = argv[++index]
     } else if (arg === '--out') {
       args.out = path.resolve(argv[++index] ?? '.')
     } else if (!arg.startsWith('-')) {
@@ -195,6 +220,18 @@ const parseArgs = (argv: string[]): Args => {
 }
 
 /** One line per module, aligned, saying what is available. */
+/**
+ * Where a fork could go back to upstream, when upstream has taken what it
+ * added: a release past the pinned one, or its branch. Not a fork that has
+ * added nothing yet, which is where every fork starts.
+ */
+const canReturn = (state: SubmoduleState): string | undefined => {
+  const merged = state.fork?.merged
+  if (!merged) return undefined
+  if (merged === state.current && state.fork?.ahead === 0) return undefined
+  return merged.replace(/^upstream\//, '')
+}
+
 const describeState = (state: SubmoduleState): string => {
   const { current, available, untagged, dirty } = state
   const parts: string[] = []
@@ -214,6 +251,19 @@ const describeState = (state: SubmoduleState): string => {
   }
 
   if (untagged > 0) parts.push(`${untagged} untagged commit${untagged === 1 ? '' : 's'}`)
+  if (state.fork) {
+    const { upstream, ahead } = state.fork
+    const from = `fork of ${describeRemote(upstream)}`
+    const returnTo = canReturn(state)
+    parts.push(
+      returnTo
+        ? `${from}, all in upstream ${returnTo}`
+        : ahead === 0
+          ? `${from}, nothing of its own`
+          : `${from}, ${ahead} commit${ahead === 1 ? '' : 's'} not upstream`
+    )
+  }
+  if (state.pushed === false) parts.push('not pushed')
   if (dirty) parts.push('uncommitted changes')
   if (state.fetched === false) parts.push('could not fetch')
   if (isSsh(state.submodule.url)) parts.push('ssh url')
@@ -320,7 +370,9 @@ const main = async (): Promise<number> => {
     process.stdout.write(
       kind === 'module'
         ? 'Next: pnpm install, then commit and push so a distribution can add it.\n'
-        : 'Next: pnpm install, then `fg-dist add-module <url>` to ship a module.\n'
+        : args.extends && kind === 'distribution'
+          ? `Next: pnpm install, then \`fg-dist inherit\` to ship what ${args.extends} ships.\n`
+          : 'Next: pnpm install, then `fg-dist add-module <url>` to ship a module.\n'
     )
     return 0
   }
@@ -457,6 +509,29 @@ const main = async (): Promise<number> => {
   if (args.command === 'workflows') {
     const root = repositoryRoot(args.cwd)
     if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    if (args.distribution) {
+      const update = await writeDistributionWorkflow(root, { force: args.force, dryRun: args.dryRun })
+      if (update.skipped) {
+        process.stdout.write('The distribution has a publishing workflow already. Pass --force to overwrite it.\n')
+        return 0
+      }
+      process.stdout.write(`${update.files.join(', ')}\n`)
+      if (update.unprivated) {
+        process.stdout.write('\nTook "private": true off package.json — a private package cannot publish.\n')
+      }
+      if (update.missingAccess) {
+        process.stdout.write(
+          'Nothing says whether it publishes publicly. For others to extend it, add\n' +
+            '  "publishConfig": { "access": "public" }\n'
+        )
+      }
+      process.stdout.write(
+        '\nIt publishes the manifest, recording every module it ships, and its policy. ' +
+          'Version it with `fg-dist release`, then run the workflow.\n'
+      )
+      return 0
+    }
 
     const updates = await writeWorkflows(root, {
       force: args.force,
@@ -597,10 +672,22 @@ const main = async (): Promise<number> => {
 
     if (args.check) {
       const releasable = await checkReleasable(root)
+      // A distribution records what it ships in what it publishes.
+      if (isDistribution(root)) await stampModules(root, { version: releasable.version })
       await reportRelease(releasable)
       process.stdout.write(
         `${releasable.name}@${releasable.version} is not on npm; ready to release as ` +
           `${releasable.tag}.\n`
+      )
+      return 0
+    }
+
+    if (isDistribution(root)) {
+      const { name, version, tag } = await releaseDistribution(root, { dryRun: args.dryRun })
+      process.stdout.write(
+        `${args.dryRun ? 'Would version' : 'Versioned'} ${name} ${version}, today's date.\n` +
+          'Commit it, then run the publish workflow, which publishes it with the modules it ' +
+          `ships and tags ${tag}.\n`
       )
       return 0
     }
@@ -927,6 +1014,33 @@ const main = async (): Promise<number> => {
       )
     }
 
+    // A pin the remote does not have breaks every other clone, a build host's first.
+    const unpushed = states.filter((state) => state.pushed === false)
+    if (unpushed.length > 0) {
+      process.stdout.write(
+        `\n${unpushed.length} module(s) are pinned at a commit their remote does not have, ` +
+          'so no other clone can check them out:\n'
+      )
+      for (const state of unpushed) {
+        process.stdout.write(`  ${state.submodule.relativePath}  ${state.head.slice(0, 7)}\n`)
+      }
+      process.stdout.write(
+        'Push them — `fg-dist contribute <name>` does, for a change on its way upstream.\n'
+      )
+    }
+
+    // A fork whose work upstream has taken can go back to upstream.
+    const returnable = states.filter((state) => canReturn(state))
+    if (returnable.length > 0) {
+      process.stdout.write('\nUpstream has everything these forks add:\n')
+      for (const state of returnable) {
+        process.stdout.write(`  ${state.submodule.relativePath}  in ${canReturn(state)}\n`)
+      }
+      process.stdout.write(
+        'Keep them, or `fg-dist unfork <name>` to go back to upstream.\n'
+      )
+    }
+
     // An extension may move ahead of what it extends, never behind it.
     const extendsReport = inspectExtends(root)
     if (extendsReport.violations.length > 0) {
@@ -975,7 +1089,7 @@ const main = async (): Promise<number> => {
 
 
   if (args.command === 'bump') {
-    const { modules } = modulesFor(args.cwd, args.names)
+    const { root, modules } = modulesFor(args.cwd, args.names)
     const states = modules.map((module) => inspect(module, { fetch: args.fetch }))
 
     const moves = states
@@ -1004,20 +1118,150 @@ const main = async (): Promise<number> => {
       return 1
     }
 
+    let failed = 0
     for (const { state, to } of moves) {
       const from = state.current ?? state.head.slice(0, 7)
+      const line = `${state.submodule.relativePath}  ${from} -> ${to}`
       if (args.dryRun) {
-        process.stdout.write(`${state.submodule.relativePath}  ${from} -> ${to}\n`)
+        const how = !state.fork
+          ? ''
+          : containsAll(state.submodule.path, `refs/tags/${to}`, state.head)
+            ? '  (fork: upstream has all of it; would move to it)'
+            : '  (fork: would merge it in)'
+        process.stdout.write(`${line}${how}\n`)
         continue
       }
-      moveTo(state.submodule, to)
-      process.stdout.write(`${state.submodule.relativePath}  ${from} -> ${to}\n`)
+      if (!state.fork) {
+        moveTo(state.submodule, to)
+        process.stdout.write(`${line}\n`)
+        continue
+      }
+      // A fork takes upstream's release by merging it, keeping its own work on top.
+      try {
+        const done = integrate(root, state, to, { push: args.push })
+        process.stdout.write(
+          done.how === 'moved'
+            ? `${line}  (fork: upstream has all of it; \`fg-dist unfork ${state.submodule.name}\` goes back)\n`
+            : `${line}  (fork: merged${done.pushed ? `, pushed to ${done.pushed}` : ', not pushed'})\n`
+        )
+      } catch (error) {
+        failed += 1
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      }
     }
 
     process.stdout.write(
       args.dryRun
         ? '\nDry run; nothing moved.\n'
         : '\nSubmodule pointers moved. Commit them to record the new versions.\n'
+    )
+    return failed > 0 ? 1 : 0
+  }
+
+
+  if (args.command === 'inherit') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+    const result = await inherit(root, { dryRun: args.dryRun })
+    const width = pad(result.added.map((module) => module.path))
+
+    for (const module of result.added) {
+      process.stdout.write(
+        `${module.path.padEnd(width)}  ${module.name} ${module.version} at ${module.commit.slice(0, 7)}, ` +
+          `from ${describeRemote(module.repository)}` +
+          `${module.upstream ? ` (a fork of ${describeRemote(module.upstream)})` : ''}\n`
+      )
+    }
+    for (const module of result.blocked) {
+      process.stderr.write(
+        `${module.path} has something in it already, so ${module.name} was not added there.\n`
+      )
+    }
+    if (result.added.length === 0 && result.blocked.length === 0) {
+      process.stdout.write(`Ships everything ${result.parent}@${result.parentVersion} ships already.\n`)
+      return 0
+    }
+    process.stdout.write(
+      args.dryRun
+        ? '\nDry run; nothing added.\n'
+        : `\nShips what ${result.parent}@${result.parentVersion} ships. Run pnpm install, then commit.\n`
+    )
+    return result.blocked.length > 0 ? 1 : 0
+  }
+
+
+  if (args.command === 'fork') {
+    const [name, url] = args.names
+    if (!name || !url) {
+      process.stderr.write('fork needs a module and the url of your fork: fg-dist fork <name> <url>\n')
+      return 1
+    }
+    const { root, modules } = modulesFor(args.cwd, [name])
+    const result = forkModule(root, modules[0], url, { ssh: args.ssh, push: args.push })
+
+    process.stdout.write(
+      `${modules[0].relativePath} is checked out from ${result.url}\n` +
+        `forked from ${result.upstream}, which .gitmodules records as its upstream\n`
+    )
+    if (result.rewritten) {
+      process.stdout.write(`(rewritten from ${url}; a submodule is cloned without an SSH key)\n`)
+    }
+    process.stdout.write(
+      result.branch
+        ? `Pinned commit pushed to ${result.branch}, where everything this distribution pins in the fork lives.\n`
+        : 'Nothing pushed. The pinned commit has to be on the fork before anyone else can check it out.\n'
+    )
+    process.stdout.write(
+      `\nNext: make the change on a branch in ${modules[0].relativePath}, then ` +
+        `\`fg-dist contribute ${modules[0].name}\`.\nCommit .gitmodules and ${modules[0].relativePath} here.\n`
+    )
+    return 0
+  }
+
+
+  if (args.command === 'contribute') {
+    const [name] = args.names
+    if (!name) {
+      process.stderr.write('contribute needs a module: fg-dist contribute <name>\n')
+      return 1
+    }
+    const { root, modules } = modulesFor(args.cwd, [name])
+    const result = contribute(root, modules[0], { push: args.push, base: args.base })
+
+    if (!args.push) {
+      process.stdout.write(
+        `Would push ${result.branch} and open a pull request into ${describeRemote(result.repository)} ${result.base}.\n`
+      )
+      return 0
+    }
+    process.stdout.write(`Pushed ${result.branch}.\n`)
+    if (result.pinnedOn) process.stdout.write(`Pinned commit kept on ${result.pinnedOn}, which outlives the pull request's branch.\n`)
+    if (result.pullRequest) {
+      process.stdout.write(`Opened ${result.pullRequest}\n`)
+    } else if (result.compare) {
+      process.stdout.write(`Open the pull request at\n  ${result.compare}\n`)
+    } else {
+      process.stdout.write(
+        `Open a pull request from ${result.branch} into ${result.base} on ${describeRemote(result.repository)}.\n`
+      )
+    }
+    process.stdout.write(`\nCommit ${modules[0].relativePath} here to ship the change meanwhile.\n`)
+    return 0
+  }
+
+
+  if (args.command === 'unfork') {
+    const [name] = args.names
+    if (!name) {
+      process.stderr.write('unfork needs a module: fg-dist unfork <name>\n')
+      return 1
+    }
+    const { root, modules } = modulesFor(args.cwd, [name])
+    const state = inspect(modules[0], { fetch: args.fetch })
+    const result = unforkModule(root, state, { to: args.to, major: args.major, force: args.force })
+    process.stdout.write(
+      `${modules[0].relativePath} is checked out from ${result.url} again, at ${result.to}.\n` +
+        `Commit .gitmodules and ${modules[0].relativePath} here. The fork itself is left as it is.\n`
     )
     return 0
   }

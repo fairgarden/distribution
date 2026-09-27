@@ -45,9 +45,34 @@ packages/design  v1.4.0  up to date
 
 ## Published distributions
 
-A published distribution has no submodules, so its manifest carries the versions
-it shipped. That is what an [extension](/overview/extending) is compared
-against, and the only place versions are written down.
+A published distribution has no submodules, so its manifest carries what it
+shipped, written in as it is published and never committed:
+
+```json
+{
+  "name": "@fairgarden/core",
+  "version": "2026.9.26",
+  "distribution": {
+    "modules": {
+      "@fairgarden/id": {
+        "version": "1.2.0",
+        "path": "apps/id",
+        "repository": "https://github.com/fairgarden/id.git",
+        "commit": "b12276c072c405673828843f3b2d440514b72713"
+      }
+    }
+  }
+}
+```
+
+The version is what an [extension](/overview/extending) is compared against, and
+the rest is where it takes its own modules from: the path, the repository to
+clone — a fork's, with its `upstream` beside it — and the commit, which may be
+past the release the version names. It is the only place versions are written
+down.
+
+The date has no leading zeros — `2026.9.26`, not `2026.09.26` — because npm
+publishes only semver, and would drop them anyway.
 
 ## Maintenance branches
 

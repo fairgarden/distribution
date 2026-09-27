@@ -4,6 +4,7 @@ import path from 'node:path'
 import semver from 'semver'
 import { isPublic } from './canary.ts'
 import { writeReadmes } from './readme.ts'
+import { publishableVersion, releaseVersion } from './manifest.ts'
 import { isDistribution } from './submodules.ts'
 
 /** Run git, returning undefined rather than throwing when it fails. */
@@ -248,6 +249,30 @@ const assertModule = (root: string): void => {
   }
 }
 
+/**
+ * Release a distribution: version it by today's date, for the publish workflow
+ * to publish. Nothing branches: a distribution has no lines to maintain, only
+ * the modules it pins, and those are released on their own.
+ *
+ * Once a day at most — the date is the version.
+ */
+export const releaseDistribution = async (
+  root: string,
+  { dryRun = false, on }: { dryRun?: boolean; on?: Date } = {}
+): Promise<{ name: string; version: string; tag: string }> => {
+  const manifest = JSON.parse(await readFile(manifestPath(root), 'utf8'))
+  const version = releaseVersion(on)
+  const tag = `v${version}`
+  if (git(root, ['rev-parse', '--verify', `refs/tags/${tag}`])) {
+    throw new ReleaseError(
+      `${tag} already exists. A distribution is versioned by the date it is released, ` +
+        'so the next release is tomorrow.'
+    )
+  }
+  if (!dryRun && manifest.version !== version) await writeVersion(root, version)
+  return { name: manifest.name, version, tag }
+}
+
 /** Read the release the repository is standing on, without changing anything. */
 export const readRelease = async (
   root: string,
@@ -458,10 +483,12 @@ export const checkReleasable = async (
   if (!raw) throw new ReleaseError('No package.json here. Run this inside a module.')
 
   const manifest = JSON.parse(raw)
-  const { name, version } = manifest
-  if (typeof name !== 'string' || typeof version !== 'string') {
+  const { name } = manifest
+  if (typeof name !== 'string' || typeof manifest.version !== 'string') {
     throw new ReleaseError('package.json needs a name and a version to release.')
   }
+  // A distribution's date is spelled as npm will publish it.
+  const version = isDistribution(root) ? publishableVersion(manifest.version) : manifest.version
 
   const tag = `v${version}`
 

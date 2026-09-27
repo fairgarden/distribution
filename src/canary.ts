@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
+import { releaseVersion, stampModules } from './manifest.ts'
+import { isDistribution } from './submodules.ts'
 
 /** Ask npm about a published version, returning undefined when it says nothing. */
 const view = (spec: string, field: string): string | undefined => {
@@ -124,13 +126,20 @@ export const stampCanary = async (
     }
   }
 
-  const version = nextCanary(manifest.version, current.version)
+  // A distribution is versioned by the date it is released, so its canary is
+  // one of today's, and it records what it ships as it is published.
+  const distribution = isDistribution(root)
+  const version = nextCanary(distribution ? releaseVersion() : manifest.version, current.version)
 
   if (!dryRun) {
-    await writeFile(
-      file,
-      `${JSON.stringify({ ...manifest, version, gitSha: sha }, null, 2)}\n`
-    )
+    if (distribution) {
+      await stampModules(root, { version, gitSha: sha })
+    } else {
+      await writeFile(
+        file,
+        `${JSON.stringify({ ...manifest, version, gitSha: sha }, null, 2)}\n`
+      )
+    }
   }
 
   return { name: manifest.name, version, skip: false, provenance, sha }

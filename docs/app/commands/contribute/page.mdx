@@ -1,0 +1,30 @@
+# `contribute`
+
+```bash
+fg-dist contribute <name> [--base <branch>] [--no-push]
+```
+
+Offers the change on a module's branch upstream, as a pull request.
+
+```
+Pushed fix-login.
+Pinned commit kept on acme-core, which outlives the pull request's branch.
+Opened https://github.com/fairgarden/id/pull/42
+```
+
+For a [fork](/overview/forking), the branch is pushed to the fork and the pull
+request opened against upstream; the fork's distribution branch moves up to the
+same commit, since that is what the distribution pins and the pull request's
+branch is deleted once merged. For a module you can push to, both go to its own
+repository.
+
+The checkout has to be on a branch, other than the one the pull request goes
+into, with nothing uncommitted. The pull request is opened with `gh`, filled
+from the commits; without it, or off GitHub, you get the link to open it by hand.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--base <branch>` | the branch it goes into; default, upstream's own |
+| `--no-push` | say what it would do, and do none of it |

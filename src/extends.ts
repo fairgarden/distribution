@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import semver from 'semver'
+import { readPublishedModules } from './manifest.ts'
 import { submodules } from './submodules.ts'
 
 /**
@@ -27,7 +28,7 @@ interface PackageJson {
   name?: string
   version?: string
   dependencies?: Record<string, string>
-  distribution?: { extends?: string }
+  distribution?: { extends?: string; modules?: unknown }
 }
 
 const readPackageJson = (file: string): PackageJson =>
@@ -64,7 +65,8 @@ const modulesFromSubmodules = (root: string): Record<string, string> | undefined
  *
  * In a repository the modules come from the submodules. A published
  * distribution has no submodules, so its manifest carries the versions it
- * shipped, which is what an extension is compared against.
+ * shipped, which is what an extension is compared against: in
+ * `distribution.modules`, or as `dependencies` in one published before that.
  */
 export const readDistribution = (root: string): Distribution => {
   const pkg = readPackageJson(path.join(root, 'package.json'))
@@ -78,10 +80,15 @@ export const readDistribution = (root: string): Distribution => {
     if (range.startsWith('workspace:') || range.startsWith('link:')) delete declared[name]
   }
 
+  const published = readPublishedModules(pkg)
+  const recorded = published
+    ? Object.fromEntries(Object.entries(published).map(([name, module]) => [name, module.version]))
+    : undefined
+
   return {
     name: pkg.name ?? path.basename(root),
     version: pkg.version ?? '0.0.0',
-    modules: modulesFromSubmodules(root) ?? declared,
+    modules: modulesFromSubmodules(root) ?? recorded ?? declared,
     extends: parent,
   }
 }
@@ -213,10 +220,14 @@ export const describeViolations = (report: ExtendsReport): string => {
       : `  ${violation.module} ${violation.ours} is older than the ${violation.parent} ${parent?.name} ships`
   )
 
+  const behind = violations.some((violation) => violation.reason === 'behind')
+  const missing = violations.some((violation) => violation.reason === 'missing')
   return [
     `${distribution.name} extends ${parent?.name}, so it cannot ship anything older:`,
     ...lines,
     'An extension may move ahead of what it extends, never behind it.',
+    ...(behind ? ["`fg-dist bump` moves a module to its newest release; a fork, by merging upstream's."] : []),
+    ...(missing ? [`\`fg-dist inherit\` adds what ${parent?.name} ships and this does not.`] : []),
   ].join('\n')
 }
 

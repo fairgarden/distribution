@@ -60,8 +60,66 @@ export interface Submodule {
   relativePath: string
   path: string
   url: string
+  /**
+   * Where a fork was forked from, recorded as `submodule.<name>.upstream` in
+   * .gitmodules. Git ignores the key; this is what reads it. Undefined for a
+   * module checked out from its own repository.
+   */
+  upstream: string | undefined
   /** The commit the repository has pinned. */
   pinned: string
+}
+
+/** The remote a fork's checkout fetches its upstream from. */
+export const UPSTREAM = 'upstream'
+
+/** Read one key of a submodule's section in .gitmodules. */
+export const gitmodulesGet = (root: string, configName: string, key: string): string | undefined =>
+  git(root, ['config', '--file', '.gitmodules', '--get', `submodule.${configName}.${key}`]) || undefined
+
+/** Write, or with `undefined` remove, one key of a submodule's section in .gitmodules. */
+export const gitmodulesSet = (
+  root: string,
+  configName: string,
+  key: string,
+  value: string | undefined
+): void => {
+  const name = `submodule.${configName}.${key}`
+  if (value === undefined) {
+    git(root, ['config', '--file', '.gitmodules', '--unset', name])
+    return
+  }
+  if (git(root, ['config', '--file', '.gitmodules', name, value]) === undefined) {
+    throw new Error(`Could not write ${name} to .gitmodules.`)
+  }
+}
+
+/**
+ * Point a fork's checkout at its upstream, as a remote of its own.
+ *
+ * Every clone of the distribution has the fork's url as `origin`, from
+ * .gitmodules; the upstream is only recorded there, so each checkout adds the
+ * remote the first time it is needed.
+ */
+export const ensureUpstreamRemote = (cwd: string, url: string): void => {
+  const current = git(cwd, ['remote', 'get-url', UPSTREAM])
+  if (current === url) return
+  git(cwd, current === undefined ? ['remote', 'add', UPSTREAM, url] : ['remote', 'set-url', UPSTREAM, url])
+}
+
+/**
+ * Whether `base` already has everything `head` changes since they parted.
+ *
+ * Answered by merging one into the other without touching the checkout: when
+ * the result is `base` exactly, `head` has nothing `base` lacks. That holds
+ * however upstream took the changes — merged, rebased or squashed — which is
+ * what matters before dropping a fork. A conflict, or anything left over,
+ * counts as not.
+ */
+export const containsAll = (cwd: string, base: string, head: string): boolean => {
+  if (git(cwd, ['merge-base', '--is-ancestor', head, base]) !== undefined) return true
+  const merged = git(cwd, ['merge-tree', '--write-tree', base, head])?.split('\n')[0]
+  return merged !== undefined && merged === git(cwd, ['rev-parse', `${base}^{tree}`])
 }
 
 /**
@@ -97,6 +155,7 @@ export const submodules = (root: string): Submodule[] => {
       relativePath,
       path: full,
       url,
+      upstream: gitmodulesGet(root, name, 'upstream'),
       pinned,
     })
   }
@@ -110,12 +169,47 @@ const versionTags = (cwd: string): string[] =>
     .filter((tag) => semver.valid(tag) !== null)
     .sort((a, b) => semver.rcompare(a, b))
 
-/** The branch tip the submodule is tracking, for counting unreleased work. */
-const upstream = (cwd: string): string | undefined => {
-  for (const ref of ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']) {
+/**
+ * The branch tip the submodule is tracking, for counting unreleased work: a
+ * fork's upstream, since that is where its releases come from, else its own.
+ */
+const trackedTip = (cwd: string, fork: boolean): string | undefined => {
+  const remotes = fork ? [UPSTREAM, 'origin'] : ['origin']
+  const refs = [...remotes.flatMap((remote) => ['HEAD', 'main', 'master'].map((branch) => `${remote}/${branch}`)), 'main', 'master']
+  for (const ref of refs) {
     if (git(cwd, ['rev-parse', '--verify', '--quiet', ref])) return ref
   }
   return undefined
+}
+
+/**
+ * Whether a commit is on the checkout's `origin`, so that another clone of
+ * the distribution — a build host, say — can check it out. A commit made in
+ * the checkout and pinned before it was pushed is not.
+ */
+const onOrigin = (cwd: string, commit: string): boolean => {
+  if (lines(git(cwd, ['branch', '--remotes', '--contains', commit, '--list', 'origin/*'])).length > 0) {
+    return true
+  }
+  // Tags reach commits too, and a fork is often pinned at an upstream tag
+  // pushed to it rather than at a branch.
+  return lines(git(cwd, ['ls-remote', '--tags', 'origin'])).some((line) => {
+    const sha = line.split('\t')[0]
+    return sha === commit || git(cwd, ['merge-base', '--is-ancestor', commit, sha]) !== undefined
+  })
+}
+
+/** How a fork stands against the repository it was forked from. */
+export interface ForkState {
+  upstream: string
+  /** Commits the fork has that upstream does not, merges and equivalent patches aside. */
+  ahead: number
+  /**
+   * The oldest upstream release, from the pinned one on, that has everything
+   * the fork adds — or the upstream branch, when only that has it yet.
+   * Undefined while upstream has not taken all of it.
+   */
+  merged: string | undefined
 }
 
 export type ReleaseKind = 'major' | 'minor' | 'patch'
@@ -138,6 +232,13 @@ export interface SubmoduleState {
   dirty: boolean
   /** Whether the remote was reachable, when a fetch was attempted. */
   fetched: boolean | undefined
+  /**
+   * Whether the pinned commit is on the remote, so other clones can check it
+   * out. Only known after a fetch.
+   */
+  pushed: boolean | undefined
+  /** Set for a fork, which also takes releases from its upstream. */
+  fork: ForkState | undefined
 }
 
 /**
@@ -153,9 +254,19 @@ export const inspect = (
 ): SubmoduleState => {
   const cwd = submodule.path
 
+  const fork = submodule.upstream
+  if (fork) ensureUpstreamRemote(cwd, fork)
+
   let fetched: boolean | undefined
   if (fetch) {
     fetched = git(cwd, ['fetch', '--tags', '--quiet']) !== undefined
+    if (fork) {
+      // A fork takes its releases from upstream, so upstream's tags are the
+      // versions it can move to.
+      const upstreamFetched = git(cwd, ['fetch', '--tags', '--quiet', UPSTREAM]) !== undefined
+      if (upstreamFetched) git(cwd, ['remote', 'set-head', UPSTREAM, '--auto'])
+      fetched = fetched && upstreamFetched
+    }
   }
 
   const dirty = (git(cwd, ['status', '--porcelain']) ?? '') !== ''
@@ -194,11 +305,27 @@ export const inspect = (
     upgrades[bucket] ??= tag
   }
 
-  const tip = upstream(cwd)
+  const tip = trackedTip(cwd, fork !== undefined)
   const from = available[0] ?? current ?? head
   const untagged = tip
     ? Number(git(cwd, ['rev-list', '--count', `${from}..${tip}`]) ?? '0')
     : 0
+
+  let forkState: ForkState | undefined
+  if (fork) {
+    const ahead = tip
+      ? Number(
+          git(cwd, ['rev-list', '--count', '--no-merges', '--cherry-pick', '--right-only', `${tip}...${head}`]) ??
+            '0'
+        )
+      : 0
+    // Oldest first: returning to upstream should move no further than it has to.
+    const releases = [...(current ? [current] : []), ...[...available].reverse()]
+    const merged =
+      releases.find((tag) => containsAll(cwd, `refs/tags/${tag}`, head)) ??
+      (tip && containsAll(cwd, tip, head) ? tip : undefined)
+    forkState = { upstream: fork, ahead, merged }
+  }
 
   return {
     submodule,
@@ -210,6 +337,8 @@ export const inspect = (
     untagged,
     dirty,
     fetched,
+    pushed: fetched ? onOrigin(cwd, head) : undefined,
+    fork: forkState,
   }
 }
 

@@ -9,6 +9,12 @@ Moves a module on from the release it has just published.
 Run it in a module, after the [publish workflow](/commands/workflows) has shipped
 the version main is sitting on.
 
+In a distribution it versions the distribution by today's date instead, for the
+workflow to publish: nothing branches, since a distribution has no lines of its
+own to maintain. Once a day at most — the date is the version. `--check`, which
+the workflow runs, also records what the distribution ships in the manifest it
+publishes.
+
 ## It will not choose for you
 
 Which way main moves on is a judgement about what changed, so it is asked for.

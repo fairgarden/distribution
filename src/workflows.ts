@@ -195,6 +195,140 @@ runs:
 
 })
 
+/** Steps both of a distribution's publishing jobs start with. */
+const distributionSetup = (fetchDepth: boolean): string => `      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          # What it publishes is read from its modules: their versions, and
+          # the commits it pins.
+          submodules: true${fetchDepth ? '\n          fetch-depth: 0 # `gh release create --generate-notes` needs history' : ''}
+
+      # No build: what a distribution publishes is its manifest and its
+      # policy, not its apps.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Only where fg-dist is developed in this workspace, as a module of the
+      # distribution: then it is linked from its checkout, which is not built.
+      # Everywhere else it is installed from npm, and this matches nothing.
+      - name: Build fg-dist
+        run: pnpm --filter @fairgarden/distribution run --if-present build
+`
+
+/**
+ * The publishing workflow a distribution carries, for others to extend it.
+ *
+ * The same shape as a module's — a canary on every push to main, a release by
+ * hand — but checked out with its submodules, since `fg-dist canary` and
+ * `release --check` record every module's version, path, repository and
+ * commit in the manifest they publish. That is what an extension checks
+ * itself against and takes its own modules from.
+ */
+export const distributionWorkflow = (packageName: string): Files => ({
+  '.github/workflows/publish.yml': `name: Publish
+
+# Publishes this distribution for others to extend. As for a module, npm
+# trusted publishing is configured against this one workflow file, and there is
+# no npm token: publish once from a workstation, then configure it on npmjs.com.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dist-tag:
+        description: 'npm dist tag to publish the release to'
+        required: false
+        type: string
+        default: 'latest'
+      dry-run:
+        description: 'Pack and validate without publishing'
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: publish-\${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Publish canary
+    if: github.event_name == 'push' && github.event.head_commit.author.name != 'renovate[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for provenance and trusted publishing
+    steps:
+${distributionSetup(false)}
+      - name: Stamp the canary version and what it ships
+        id: canary
+        run: pnpm run canary
+
+      - name: Publish to npm
+        if: steps.canary.outputs.skip != 'true'
+        run: |
+          if [ "\${{ steps.canary.outputs.provenance }}" = "true" ]; then
+            npm publish --tag canary --provenance
+          else
+            npm publish --tag canary
+          fi
+
+  release:
+    name: Publish release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required for pushing the tag and creating the release
+      id-token: write # Required for provenance and trusted publishing
+    environment:
+      name: npm-publish
+    steps:
+${distributionSetup(true)}
+      - name: Stamp what it ships
+        id: version
+        # Refuses when this date is already on npm: \`fg-dist release\` versions
+        # the distribution by the day it is released.
+        run: pnpm run release:check
+
+      - name: Publish to npm
+        env:
+          DIST_TAG: \${{ inputs.dist-tag }}
+          PROVENANCE: \${{ steps.version.outputs.provenance }}
+          DRY_RUN: \${{ inputs.dry-run }}
+        run: |
+          flags="--tag \$DIST_TAG"
+          [ "\$PROVENANCE" = "true" ] && flags="\$flags --provenance"
+          [ "\$DRY_RUN" = "true" ] && flags="\$flags --dry-run"
+          npm publish \$flags
+
+      - name: Tag and create the GitHub release
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          TAG: \${{ steps.version.outputs.tag }}
+        run: |
+          git tag "\$TAG"
+          git push origin "\$TAG"
+          gh release create "\$TAG" --title "\$TAG" --generate-notes --verify-tag
+
+      - name: Summary
+        run: |
+          echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\`." >> "\$GITHUB_STEP_SUMMARY"
+`,
+})
+
 export interface WorkflowUpdate {
   relativePath: string
   files: string[]
@@ -409,4 +543,60 @@ export const writeWorkflows = async (
   }
 
   return updates
+}
+
+
+/**
+ * Give the distribution itself a publishing workflow, so others can extend it.
+ *
+ * Asked for rather than done by `writeWorkflows`: it makes the distribution
+ * public on npm, which a distribution only its owner deploys has no need to be.
+ * The tarball is the manifest and the organization's policy, which is what an
+ * extension builds its own on.
+ */
+export const writeDistributionWorkflow = async (
+  root: string,
+  { force = false, dryRun = false }: { force?: boolean; dryRun?: boolean } = {}
+): Promise<WorkflowUpdate> => {
+  const manifest = await readManifest(root)
+  const name = manifest?.name
+  if (typeof name !== 'string') throw new Error('The distribution needs a name in package.json to publish.')
+
+  const relativePath = '.'
+  const workflow = path.join(root, '.github/workflows/publish.yml')
+  if (existsSync(workflow) && !force) {
+    return { relativePath, files: [], skipped: true, unprivated: false, missingFiles: false, missingAccess: false }
+  }
+
+  const written: string[] = []
+  for (const [relative, contents] of Object.entries(distributionWorkflow(name))) {
+    if (!dryRun) {
+      await mkdir(path.dirname(path.join(root, relative)), { recursive: true })
+      await writeFile(path.join(root, relative), contents)
+    }
+    written.push(relative)
+  }
+
+  const packageManager = typeof manifest?.packageManager === 'string' ? manifest.packageManager : undefined
+  const change = await updateManifest(root, name, await toolVersion(), packageManager, { write: !dryRun })
+  if (change.changed) written.push('package.json')
+
+  // Its policy is what an extension layers its own on; nothing else is needed.
+  let missingFiles = change.missingFiles
+  if (missingFiles) {
+    const updated = (await readManifest(root)) ?? {}
+    const files = existsSync(path.join(root, 'policies')) ? ['policies'] : []
+    if (!dryRun) await writeFile(path.join(root, 'package.json'), `${JSON.stringify({ ...updated, files }, null, 2)}\n`)
+    if (!written.includes('package.json')) written.push('package.json')
+    missingFiles = false
+  }
+
+  return {
+    relativePath,
+    files: written.sort(),
+    skipped: false,
+    unprivated: change.unprivated,
+    missingFiles,
+    missingAccess: change.missingAccess,
+  }
 }

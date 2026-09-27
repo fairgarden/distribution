@@ -17,9 +17,18 @@ Or run without installing: `pnpx @fairgarden/distribution <command>`.
 - [`sync`](/commands/sync) — what has moved, and whether the floor holds
 - [`bump`](/commands/bump) — take the newest version of each module
 - [`check`](/commands/check) — fail when this ships older than what it extends
+- [`inherit`](/commands/inherit) — ship what the distribution this extends ships
 - [`readme`](/commands/readme) — write the module versions into the readmes
 - [`use-https`](/commands/use-https) — rewrite ssh submodule urls
 - [`overrides`](/commands/overrides) — resolve modules from the tree, not the registry
+
+## Forking a module
+
+- [`fork`](/commands/fork) — check a module out from your fork, keeping its upstream
+- [`contribute`](/commands/contribute) — push the change and open a pull request upstream
+- [`unfork`](/commands/unfork) — go back to upstream once it has the fork's work
+
+See [Forking a module](/overview/forking).
 
 ## The organization's policy
 
@@ -33,7 +42,9 @@ Or run without installing: `pnpx @fairgarden/distribution <command>`.
 - [`prerelease`](/commands/prerelease) — start the next line on a branch, leaving main where it is
 
 A module releases on its own schedule; see
-[Releasing a module](/overview/releasing).
+[Releasing a module](/overview/releasing). A distribution others extend
+publishes too — `workflows --distribution`, then `release` versions it by date;
+see [Extending](/overview/extending#publishing-a-distribution).
 
 ## Shared options
 

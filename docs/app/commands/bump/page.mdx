@@ -1,7 +1,7 @@
 # `bump`
 
 ```bash
-fg-dist bump [name...] [--major] [--dry-run] [--no-fetch]
+fg-dist bump [name...] [--major] [--dry-run] [--no-fetch] [--no-push]
 ```
 
 Moves each module to its newest version.
@@ -33,6 +33,21 @@ Nothing is committed either; the moved pointers are left for you.
 Only tags that parse as semver count as an upgrade. Commits past the newest tag
 are never bumped to: a commit makes no statement about what changed, which is
 what a version is for.
+
+## Forks
+
+A [fork](/overview/forking) takes upstream's releases. When the release already
+has everything the fork adds, the fork just moves to it; otherwise the release
+is merged into the fork, keeping its work on top, and pushed to the fork's
+distribution branch so other clones can fetch the new pin:
+
+```
+apps/id  v1.2.0 -> v1.3.0  (fork: merged, pushed to acme-core)
+```
+
+A merge, not a rebase, so the commits older distributions pinned stay in the
+fork. One that conflicts is left for you, with the command to run. `--no-push`
+keeps it local.
 
 ## Safety
 

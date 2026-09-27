@@ -368,13 +368,14 @@ export const readPackageName = async (root: string): Promise<string | undefined>
   }
 }
 
-/** `2024.01.15` — the date-based version a distribution is released under. */
+/**
+ * `2024.1.15` — the date-based version a distribution is released under.
+ *
+ * Unpadded, because a distribution is published to npm and semver allows no
+ * leading zeros: npm would turn `2024.01.15` into this anyway.
+ */
 export const calendarVersion = (on: Date = new Date()): string =>
-  [
-    on.getUTCFullYear(),
-    String(on.getUTCMonth() + 1).padStart(2, '0'),
-    String(on.getUTCDate()).padStart(2, '0'),
-  ].join('.')
+  [on.getUTCFullYear(), on.getUTCMonth() + 1, on.getUTCDate()].join('.')
 
 /**
  * The organization's `policies/`: its `.manifest`, and a workspace package
@@ -398,7 +399,7 @@ const policiesFiles = (name: string, origin?: string): Files => ({
       '@fairgarden/policy': VERSIONS.policy,
     },
   }),
-  'policies/.gitignore': '/dist\n/node_modules\n',
+  'policies/.gitignore': '/dist\n/node_modules\n/.turbo\n',
   'policies/Readme.md': `# Policies
 
 The organization's rules for the services this distribution ships: who may
