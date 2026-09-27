@@ -331,6 +331,35 @@ describe('setting up Vercel', () => {
 })
 
 describe('what an app may declare', () => {
+  const declaring = (env) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'declared-'))
+    json(path.join(dir, 'package.json'), { name: '@acme/app', fairgarden: { env } })
+    return () => envApp(dir)
+  }
+
+  test('is checked, every field, when it is read', () => {
+    assert.throws(declaring({ X: { description: 'x', unless: 'OTHER' } }), /"unless" is not a list of variable names/)
+    assert.throws(declaring({ X: { description: 'x', generate: 'secert' } }), /"generate" is not "secret"/)
+    assert.throws(declaring({ X: { description: 'x', rotated: true } }), /"rotated", which fg-dist does not know/)
+    assert.throws(declaring({ X: { description: 'x', deployment: 'Not A Package' } }), /"deployment" is not a package name/)
+    assert.throws(declaring({ X: 'a string' }), /not as an object/)
+  })
+
+  test('a variable two apps declare for one deployment, they have to declare alike', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'two-'))
+    const one = path.join(root, 'one')
+    const two = path.join(root, 'two')
+    for (const [dir, rotate] of [[one, true], [two, false]]) {
+      mkdirSync(dir)
+      json(path.join(dir, 'package.json'), {
+        name: `@acme/${path.basename(dir)}`,
+        fairgarden: { env: { SHARED: { description: 's', required: 'deployed', generate: 'secret', rotate } } },
+      })
+    }
+    const deployment = { name: 'mono', root, apps: [envApp(one), envApp(two)] }
+    assert.throws(() => requirementsFor(deployment, 'production'), /@acme\/one and @acme\/two both declare SHARED, but differently \(rotate\)/)
+  })
+
   test('ties only rotated secrets together, which are made once for every side', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'declared-'))
     json(path.join(dir, 'package.json'), {
@@ -400,6 +429,20 @@ describe('rotating', () => {
       assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, expected)
       assert.equal(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').length, 2)
     }
+  })
+
+  test('rotates a variable two apps in one deployment declare once', async () => {
+    const root = distribution({ monolith: true })
+    // members' own session key, declared again by id, alike
+    const idManifest = path.join(root, 'apps', 'id', 'package.json')
+    const id = JSON.parse(readFileSync(idManifest, 'utf8'))
+    id.fairgarden.env.ACME_MEMBERS_SECRET = MEMBERS.fairgarden.env.ACME_MEMBERS_SECRET
+    json(idManifest, id)
+    const vercel = fakeVercel()
+    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    const result = await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout.match(/ACME_MEMBERS_SECRET {2}rotated/g).length, 1)
   })
 
   test('makes a slot first set readable sensitive, the moment it is rotated into', async () => {

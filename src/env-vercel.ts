@@ -9,6 +9,7 @@ import {
   type EnvApp,
   type EnvDeclaration,
   type Requirement,
+  assertAgree,
   UNREADABLE,
 } from './env.ts'
 import {
@@ -302,10 +303,19 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
 
   for (const remote of remotes) {
     const here = new Set(remote.deployment.apps.map((app) => app.name))
+    // Two apps in one deployment may declare the same variable; it is one
+    // variable, rotated once, and they have to mean the same by it.
+    const planned = new Map<string, Requirement>()
     for (const app of everyApp(remotes)) {
       for (const [variable, declaration] of Object.entries(app.env)) {
         if (!declaration.rotate || !here.has(declaration.deployment ?? app.name)) continue
         if (!isPresent(remote.existing, variable)) continue
+        const already = planned.get(variable)
+        if (already) {
+          assertAgree(variable, already, app.name, declaration)
+          continue
+        }
+        planned.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
         const group = groups.get(variable) ?? [variable]
         if (only.length > 0 && !group.some((tied) => only.includes(tied))) continue
 

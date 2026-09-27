@@ -1106,6 +1106,11 @@ const main = async (): Promise<number> => {
       throw new Error(`${root} has no package.json: run this where an app or a monolith is built.`)
     }
     if (args.status && args.rollback) throw new Error('--status or --rollback, not both.')
+    // A build only ever migrates: --build is not a way to roll back, or to
+    // look, with a build's permission to touch production.
+    if (args.build && (args.rollback || args.status)) {
+      throw new Error('--build migrates, and nothing else: roll back, or look, by hand.')
+    }
     // How far to roll back means nothing without rolling back — and ignored,
     // `--steps 2` would migrate forward instead.
     if (!args.rollback && (args.steps !== undefined || args.to !== undefined)) {

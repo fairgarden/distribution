@@ -79,6 +79,26 @@ export interface Requirement {
 }
 
 const VARIABLE = /^[A-Z_][A-Z0-9_]*$/
+const PACKAGE = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/
+
+const is = (what: string, test: (value: unknown) => boolean) => ({ what, test })
+const aVariable = (value: unknown) => typeof value === 'string' && VARIABLE.test(value)
+
+/** Every field a declaration may have, and what each has to be. */
+const FIELDS: Record<keyof EnvDeclaration, { what: string; test: (value: unknown) => boolean }> = {
+  description: is('text', (value) => typeof value === 'string' && value.trim().length > 0),
+  required: is('deployed or production', (value) => value === 'deployed' || value === 'production'),
+  deployment: is('a package name', (value) => typeof value === 'string' && PACKAGE.test(value)),
+  sensitive: is('true or false', (value) => typeof value === 'boolean'),
+  generate: is('"secret"', (value) => value === 'secret'),
+  rotate: is('true or false', (value) => typeof value === 'boolean'),
+  value: is('text', (value) => typeof value === 'string'),
+  example: is('text', (value) => typeof value === 'string'),
+  unless: is('a list of variable names', (value) => Array.isArray(value) && value.every(aVariable)),
+  unlessMounted: is('a package name', (value) => typeof value === 'string' && PACKAGE.test(value)),
+  sameAs: is('a variable name', aVariable),
+  verifies: is('true or false', (value) => typeof value === 'boolean'),
+}
 
 const readManifest = (root: string): Record<string, unknown> | undefined => {
   try {
@@ -97,13 +117,25 @@ export const envApp = (root: string): EnvApp | undefined => {
   const name = typeof manifest?.name === 'string' ? manifest.name : root
 
   const env = fairgarden?.env ?? {}
+  if (typeof env !== 'object' || env === null || Array.isArray(env)) {
+    throw new Error(`${name} has a fairgarden.env that is not an object of variables.`)
+  }
   for (const [variable, declaration] of Object.entries(env)) {
     const wrong = (what: string) => new Error(`${name} declares ${variable} in fairgarden.env, but ${what}.`)
     if (!VARIABLE.test(variable)) throw wrong('that is not an environment variable name')
-    if (typeof declaration?.description !== 'string') throw wrong('without a description of what it is for')
-    if (declaration.required && !['deployed', 'production'].includes(declaration.required)) {
-      throw wrong('"required" is neither deployed nor production')
+    if (typeof declaration !== 'object' || declaration === null || Array.isArray(declaration)) {
+      throw wrong('not as an object')
     }
+    // package.json is whatever was typed, so every field is checked here —
+    // not where it is first used, which may be a deployment later.
+    const known = new Set(Object.keys(FIELDS))
+    const stray = Object.keys(declaration).filter((field) => !known.has(field))
+    if (stray.length > 0) throw wrong(`with ${stray.map((field) => `"${field}"`).join(', ')}, which fg-dist does not know`)
+    for (const [field, valid] of Object.entries(FIELDS)) {
+      const value = (declaration as unknown as Record<string, unknown>)[field]
+      if (value !== undefined && !valid.test(value)) throw wrong(`"${field}" is not ${valid.what}`)
+    }
+    if (typeof declaration.description !== 'string') throw wrong('without a description of what it is for')
     if (declaration.rotate && !declaration.generate) throw wrong('only a generated secret can be rotated')
     // One value is made for a tied group only where it is a rotated secret;
     // anything else would be made, or asked for, once for each side.
@@ -152,6 +184,20 @@ export const distributionAround = (from: string): string | undefined => {
   }
 }
 
+/** What decides how a variable is set and rotated, which two apps sharing it have to say alike. */
+const DECISIVE = ['sensitive', 'generate', 'rotate', 'value', 'sameAs', 'verifies'] as const
+
+/** Two apps declaring one variable for one deployment have to mean the same by it. */
+export const assertAgree = (variable: string, known: Requirement, app: string, declaration: EnvDeclaration): void => {
+  const differ = DECISIVE.filter((field) => known.declaration[field] !== declaration[field])
+  if (differ.length > 0) {
+    throw new Error(
+      `${known.apps[0]} and ${app} both declare ${variable}, but differently (${differ.join(', ')}). ` +
+        'Whichever was set would be wrong for the other.'
+    )
+  }
+}
+
 const requiredIn = (declaration: EnvDeclaration, environment: string): boolean =>
   declaration.required === 'deployed' || (declaration.required === 'production' && environment === 'production')
 
@@ -178,8 +224,10 @@ export const requirementsFor = (
       const known = found.get(variable)
       // A rotated secret is set by hand, or in either slot.
       const anyOf = declaration.rotate ? [variable, slotVariable(variable, 'A'), slotVariable(variable, 'B')] : [variable]
-      if (known) known.apps.push(app.name)
-      else found.set(variable, { variable, anyOf, apps: [app.name], declaration })
+      if (known) {
+        assertAgree(variable, known, app.name, declaration)
+        known.apps.push(app.name)
+      } else found.set(variable, { variable, anyOf, apps: [app.name], declaration })
     }
   }
 

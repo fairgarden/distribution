@@ -376,6 +376,19 @@ describe('migrating a monolith', () => {
     assert.match(result.stdout, /@acme\/members\s+applied 0000_init\s+\(DATABASE_URL\)/)
   })
 
+  test('a build migrates, and nothing else', async () => {
+    const { root } = monolith()
+    for (const flag of ['--rollback', '--status']) {
+      const result = await fgDist(root, ['migrate', '--build', flag, '@acme/id'], {
+        VERCEL: '1',
+        VERCEL_ENV: 'production',
+        DATABASE_URL: database.url,
+      })
+      assert.notEqual(result.status, 0, flag)
+      assert.match(result.stderr, /--build migrates, and nothing else/)
+    }
+  })
+
   test('refuses --to without a migration after it, rather than rolling back one', async () => {
     const { root } = monolith()
     await fgDist(root, ['migrate'], { DATABASE_URL: database.url })
