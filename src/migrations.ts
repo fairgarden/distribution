@@ -104,12 +104,74 @@ export const declaredMigrations = (root: string): Migrations | undefined => {
   return { name, root, directory: path.resolve(root, directory), table, lock, database }
 }
 
+/**
+ * What of `sql` is not a comment, as PostgreSQL reads it: `--` to the end of
+ * the line, and `/* … *\/` — which nest — but neither inside a quoted string,
+ * a quoted identifier or a dollar-quoted body, where they are text.
+ */
+export const withoutComments = (sql: string): string => {
+  let kept = ''
+  let at = 0
+  while (at < sql.length) {
+    const here = sql[at]
+    const next = sql[at + 1]
+    if (here === '-' && next === '-') {
+      const end = sql.indexOf('\n', at)
+      at = end === -1 ? sql.length : end
+      continue
+    }
+    if (here === '/' && next === '*') {
+      let depth = 1
+      at += 2
+      while (at < sql.length && depth > 0) {
+        if (sql[at] === '/' && sql[at + 1] === '*') {
+          depth += 1
+          at += 2
+        } else if (sql[at] === '*' && sql[at + 1] === '/') {
+          depth -= 1
+          at += 2
+        } else at += 1
+      }
+      kept += ' '
+      continue
+    }
+    if (here === "'" || here === '"') {
+      // `E'…'` takes backslash escapes; everywhere else, a doubled quote.
+      const escapes = here === "'" && /[eE]/.test(sql[at - 1] ?? '') && !/\w/.test(sql[at - 2] ?? '')
+      let end = at + 1
+      while (end < sql.length) {
+        if (escapes && sql[end] === '\\') end += 2
+        else if (sql[end] === here && sql[end + 1] === here) end += 2
+        else if (sql[end] === here) break
+        else end += 1
+      }
+      kept += sql.slice(at, end + 1)
+      at = end + 1
+      continue
+    }
+    if (here === '$') {
+      const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(at))?.[0]
+      if (tag) {
+        const close = sql.indexOf(tag, at + tag.length)
+        const end = close === -1 ? sql.length : close + tag.length
+        kept += sql.slice(at, end)
+        at = end
+        continue
+      }
+    }
+    kept += here
+    at += 1
+  }
+  return kept
+}
+
 const statements = (sql: string): string[] =>
   sql
     .split(BREAKPOINT)
     .map((statement) => statement.trim())
-    // A stub, or a chunk of nothing but comments, runs nothing.
-    .filter((statement) => statement.replace(/--.*$/gm, '').trim().length > 0)
+    // A stub, or a chunk of nothing but comments of either kind, runs nothing:
+    // a down file of only `/* TODO */` is no way back, not an empty one.
+    .filter((statement) => withoutComments(statement).trim().length > 0)
 
 export const readMigrations = (directory: string): Migration[] => {
   const journal = JSON.parse(

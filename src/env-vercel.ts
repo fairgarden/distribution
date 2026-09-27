@@ -242,10 +242,27 @@ export const planSetup = async (
   return plan
 }
 
-export const applySetup = (plan: SetupPlan, environment: string): void => {
+/** Where Vercel's team policy makes every Production and Preview variable sensitive. */
+export const SENSITIVE_POLICY =
+  "the team's policy that makes every Production and Preview variable sensitive (Team Settings → Security & Privacy)"
+
+/**
+ * Add what is planned. Returns what was added readable but stored sensitive:
+ * a team policy can override the CLI, and a rotated secret has to be read
+ * back, since rotating keeps the value it has now.
+ */
+export const applySetup = (plan: SetupPlan, environment: string): PlannedVariable[] => {
   for (const { remote, variable, value, sensitive } of plan.planned) {
     addVariable(remote.target, variable, environment, value, { sensitive })
   }
+  const forced: PlannedVariable[] = []
+  for (const remote of new Set(plan.planned.filter((each) => !each.sensitive).map((each) => each.remote))) {
+    const stored = listVariables(remote.target, environment)
+    for (const each of plan.planned) {
+      if (each.remote === remote && !each.sensitive && stored.get(each.variable)?.value === undefined) forced.push(each)
+    }
+  }
+  return forced
 }
 
 export interface Rotation {
@@ -279,7 +296,8 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
         if (current.value === undefined) {
           throw new Error(
             `${variable} is sensitive in ${remote.target.project}, so its current value cannot be kept for the switch. ` +
-              'Remove it, and `pnpm dist env setup` adds it again, readable.'
+              'Remove it, and `pnpm dist env setup` adds it again, readable — unless the project is under ' +
+              `${SENSITIVE_POLICY}, which stores it sensitive whatever it is added as: turn that off first.`
           )
         }
         const key = group[0]

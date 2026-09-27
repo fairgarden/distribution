@@ -104,10 +104,10 @@ const distribution = ({ monolith }) => {
  * A stand-in for the Vercel CLI: projects' variables in a JSON file, and every
  * call it was given in a log.
  */
-const fakeVercel = (projects = {}) => {
+const fakeVercel = (projects = {}, { policy } = {}) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vercel-'))
   const state = path.join(dir, 'state.json')
-  json(state, { projects, log: [] })
+  json(state, { projects, policy, log: [] })
   const bin = path.join(dir, 'vercel')
   writeFileSync(
     bin,
@@ -128,7 +128,9 @@ if (command === 'env' && sub === 'list') {
 } else if (command === 'env' && (sub === 'add' || sub === 'update')) {
   const variable = (project()[name] ??= {})
   if (sub === 'add' && variable[environment]) { process.stderr.write('exists'); process.exit(1) }
-  variable[environment] = { value: stdin(), sensitive: sub === 'add' ? args.includes('--sensitive') : variable[environment].sensitive }
+  // A team policy stores Production and Preview sensitive, whatever the CLI asks for.
+  const forced = state.policy === 'sensitive' && environment !== 'development'
+  variable[environment] = { value: stdin(), sensitive: forced || (sub === 'add' ? args.includes('--sensitive') : variable[environment].sensitive) }
 } else if (command === 'api') {
   const id = decodeURIComponent(sub.split('/').pop())
   process.stdout.write(JSON.stringify({ targets: { production: { id: 'dpl_' + id } } }))
@@ -276,6 +278,19 @@ describe('setting up Vercel', () => {
       else process.env.VERCEL_CLI = saved
     }
     assert.equal(readFileSync(manifest, 'utf8'), before)
+  })
+
+  test("says so when a team policy stores what has to stay readable as sensitive", async () => {
+    const root = distribution({ monolith: true })
+    const vercel = fakeVercel({}, { policy: 'sensitive' })
+    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /stored these as sensitive although they were added readable, so they cannot be rotated:\n {2}acme-core {2}ACME_MEMBERS_SECRET/)
+    assert.match(result.stderr, /Team Settings → Security & Privacy/)
+    // and rotating says why, rather than send them round in a circle
+    const rotate = await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
+    assert.notEqual(rotate.status, 0)
+    assert.match(rotate.stderr, /turn that off first/)
   })
 
   test('matches a shared secret one side already has', async () => {

@@ -98,7 +98,10 @@ Production is redeployed after each step — the deployment serving it now, so a
 instant rollback is kept, not undone.
 
 Rotating keeps the current value, so a rotated secret is stored readable rather
-than sensitive; everything else a secret is sensitive. Name variables to rotate
+than sensitive; everything else a secret is sensitive. A team that enforces
+sensitive variables for Production and Preview (Team Settings → Security &
+Privacy) stores them sensitive anyway, and then they cannot be rotated without
+signing people out: setup checks what it stored, and says so. Name variables to rotate
 only those, and the ones tied to them.
 
 A session sealed with a value lasts until the second rotation after it, so

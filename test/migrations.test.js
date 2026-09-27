@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 import pg from 'pg'
-import { declaredMigrations, migrate, rollback, status } from '../dist/migrations.js'
+import { declaredMigrations, migrate, rollback, status, withoutComments } from '../dist/migrations.js'
 import { databaseOf, inBuild, migrationTargets, runMigrations } from '../dist/migrate.js'
 
 const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url))
@@ -153,11 +153,38 @@ describe('the migrator', () => {
     assert.deepEqual(await tables(database, 'd\\_'), ['d_a', 'd_migrations'])
   })
 
+  test('takes a down file of nothing but comments of either kind for no way back', async () => {
+    const journal = { table: 'b_migrations', lock: 48 }
+    const directory = folder([
+      { tag: '0000_a', up: 'create table b_a (id int);', down: '/* TODO: drop b_a */\n-- and anything else' },
+    ])
+    await migrate(database.pool, directory, journal)
+    assert.equal((await status(database.pool, directory, journal))[0].reversible, false)
+    await assert.rejects(rollback(database.pool, directory, journal), /No down migration for 0000_a/)
+    assert.deepEqual(await tables(database, 'b\\_'), ['b_a', 'b_migrations'])
+  })
+
   test('takes no table name it would have to quote', async () => {
     await assert.rejects(
       migrate(database.pool, folder([]), { table: 'x; drop table t_migrations', lock: 1 }),
       /not a plain lower-case table name/
     )
+  })
+})
+
+describe('what is a comment', () => {
+  test('as PostgreSQL reads it: both kinds, nested, and never inside quotes', () => {
+    assert.equal(withoutComments('/* a /* nested */ comment */').trim(), '')
+    assert.equal(withoutComments('drop table t; -- done').trim(), 'drop table t;')
+    for (const text of [
+      "select '/* not a comment */'",
+      'select "-- a column"',
+      "select 'it''s -- text'",
+      "select E'it\\'s -- text'",
+      'create function f() returns int as $body$ select 1 /* kept */ $body$ language sql',
+    ]) {
+      assert.equal(withoutComments(text), text)
+    }
   })
 })
 
