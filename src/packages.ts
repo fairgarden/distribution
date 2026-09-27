@@ -4,7 +4,8 @@ import path from 'node:path'
 
 /** Where a package is installed, seen from `base`, whether or not it exports its package.json. */
 export const packageDir = (base: string, name: string): string | undefined => {
-  const require = createRequire(path.join(base, 'package.json'))
+  // createRequire takes nothing but an absolute path.
+  const require = createRequire(path.resolve(base, 'package.json'))
   try {
     return path.dirname(require.resolve(`${name}/package.json`))
   } catch {

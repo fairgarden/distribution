@@ -194,6 +194,12 @@ describe('what a deployment needs', () => {
     )
   })
 
+  test('finds a monolith\'s apps from a relative path too', () => {
+    const root = distribution({ monolith: true })
+    const relative = path.relative(process.cwd(), path.join(root, 'apps', 'monolith'))
+    assert.deepEqual(deploymentAt(relative).apps.map((app) => app.name), ['@acme/id', '@acme/members'])
+  })
+
   test('apart, each needs its own, and id what members says id needs to know about it', () => {
     const root = distribution({ monolith: false })
     const id = envApp(path.join(root, 'apps', 'id'))
