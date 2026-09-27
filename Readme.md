@@ -2,7 +2,7 @@
 
 <!-- fg:version -->
 
-Version **0.1.0-alpha.5**
+Version **0.1.0-alpha.6**
 
 <!-- /fg:version -->
 
@@ -81,7 +81,7 @@ handled by `@fairgarden/monolith`.
 
 ## Releasing
 
-This module releases on its own. `0.1.0-alpha.5` is what main is working towards,
+This module releases on its own. `0.1.0-alpha.6` is what main is working towards,
 not what is published — the version here is always the next one. Its release
 notes are the top section of `CHANGELOG.md`, where every pull request adds a
 line linking itself.
@@ -91,7 +91,7 @@ line linking itself.
    pull requests are held — their changelog check fails — so nothing is noted
    under a version that has already shipped.
 2. **Move it on.** `pnpm release` opens a pull request moving main to
-   `0.1.0-alpha.6` and starting its section of the changelog, or
+   `0.1.0-alpha.7` and starting its section of the changelog, or
    `pnpm release --id rc` to change identifier. Merging it lifts the hold. A
    prerelease gets no maintenance branch; there is no released line behind it
    yet.
