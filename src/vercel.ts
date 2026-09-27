@@ -21,6 +21,8 @@ export interface VercelVariable {
   type: string
   /** When it was last set, which Vercel says even of a sensitive variable. */
   updatedAt: number
+  /** Every environment it is set for: one record, changed or removed for all of them at once. */
+  targets: string[]
 }
 
 export class VercelError extends Error {}
@@ -69,6 +71,7 @@ export const listVariables = (target: VercelProject, environment: string): Map<s
       value: variable.value,
       type: variable.type,
       updatedAt: variable.updatedAt ?? variable.createdAt ?? 0,
+      targets: targets.filter((each): each is string => Boolean(each)),
     })
   }
   return found

@@ -121,6 +121,28 @@ export const assertTies = (apps: EnvApp[]): void => {
   }
 }
 
+/** Whether any of `apps` declares `name` for this project's deployment — its own, or another's, as members does for id. */
+const declares = (apps: EnvApp[], remote: Remote, name: string): boolean => {
+  const here = new Set(remote.deployment.apps.map((app) => app.name))
+  return apps.some((app) => app.env[name] !== undefined && here.has(app.env[name].deployment ?? app.name))
+}
+
+/**
+ * Vercel keeps a variable set for several environments as one record, and the
+ * CLI changes or removes the whole of it. Rotating production would change
+ * preview too, or remove it there, so such a variable is refused.
+ */
+const assertOwnRecord = (remote: Remote, variable: string): void => {
+  const targets = remote.existing.get(variable)?.targets ?? []
+  if (targets.length > 1) {
+    throw new Error(
+      `${variable} in ${remote.target.project} is one variable for ${targets.join(', ')}: changing it for one ` +
+        'would change it for all. In the project\'s settings, keep it for one environment and remove the others; ' +
+        'then `pnpm dist env setup --environment <each>` gives each its own.'
+    )
+  }
+}
+
 /**
  * The groups `sameAs` ties, for these projects. A group is of names, so each
  * of its names has to be one project's: were two projects to declare one, the
@@ -132,10 +154,7 @@ const tiesIn = (remotes: Remote[]): Map<string, string[]> => {
   const groups = groupsOf(apps)
   for (const [name, group] of groups) {
     if (group.length < 2) continue
-    const projects = remotes.filter((remote) => {
-      const here = new Set(remote.deployment.apps.map((app) => app.name))
-      return apps.some((app) => app.env[name] && here.has(app.env[name].deployment ?? app.name))
-    })
+    const projects = remotes.filter((remote) => declares(apps, remote, name))
     if (projects.length > 1) {
       throw new Error(
         `${name} is tied to ${group.filter((tied) => tied !== name).join(', ')}, and ` +
@@ -346,9 +365,10 @@ export const planSetup = async (
         const shared = shareKey(groups, remote, variable)
         let chosen = decided.get(shared)
         if (!chosen) {
+          // Each tied name where it is declared: a slot of that name anywhere else is not this secret.
           const already = (group.length > 1 ? remotes : [remote]).flatMap((each) =>
             group
-              .filter((tied) => isPresent(each.existing, tied))
+              .filter((tied) => declares(everyApp(remotes), each, tied) && isPresent(each.existing, tied))
               .map((tied): Member => ({ remote: each, name: tied, verifies: Boolean(rotated.get(tied)?.verifies) }))
           )
           chosen = { value: newSecret(), slot: targetSlot(already) }
@@ -382,6 +402,7 @@ export const planSetup = async (
       plan.notes.push({ remote, variable, source })
     }
   }
+  for (const write of plan.writes) if (write.exists) assertOwnRecord(write.remote, write.variable)
   return plan
 }
 
@@ -536,6 +557,12 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
     if (chosen.has(key)) continue
     const members = found.filter((each) => shareKey(groups, each.remote, each.name) === key)
     chosen.set(key, { value: newSecret(), slot: targetSlot(members) })
+  }
+
+  for (const { remote, name } of found) {
+    for (const variable of [name, ...SLOTS.map((slot) => slotVariable(name, slot)), pointerVariable(name)]) {
+      assertOwnRecord(remote, variable)
+    }
   }
 
   const phases: Rotation[][] = [[], []]

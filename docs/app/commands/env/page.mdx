@@ -20,7 +20,10 @@ declares any. Without one, each app is a project of its own, and each project
 has its own. A value two apps have to share — the secret one signs in to the
 other with — is set alike in both, when one says so with `sameAs`. Two projects
 that name a secret alike, untied, each have their own; a name `sameAs` ties has
-to be declared for one project only.
+to be declared for one project only. A variable set for several environments at
+once — the dashboard's default — is one record, which Vercel changes or removes
+for all of them, so rotating one environment refuses it: keep it for one, and
+let `setup` give each of the others its own.
 
 Two apps in one deployment may declare the same variable, alike in how it is
 set. It is needed while any of them needs it: its `unless` excuses it only when

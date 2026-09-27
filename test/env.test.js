@@ -135,7 +135,7 @@ const project = () => (state.projects[flag('--project')] ??= {})
 const [command, sub, name, environment] = args
 if (command === 'env' && sub === 'list') {
   const envs = Object.entries(project()).flatMap(([key, targets]) =>
-    targets[name] ? [{ key, value: targets[name].sensitive ? undefined : targets[name].value, type: targets[name].sensitive ? 'sensitive' : 'encrypted', target: [name], updatedAt: targets[name].updatedAt }] : [])
+    targets[name] ? [{ key, value: targets[name].sensitive ? undefined : targets[name].value, type: targets[name].sensitive ? 'sensitive' : 'encrypted', target: targets[name].shared ?? [name], updatedAt: targets[name].updatedAt }] : [])
   process.stdout.write(JSON.stringify({ envs }))
 } else if (command === 'env' && (sub === 'add' || sub === 'update')) {
   const variable = (project()[name] ??= {})
@@ -240,6 +240,12 @@ describe('what a deployment needs', () => {
     json(path.join(site, 'package.json'), { name: '@acme/site', dependencies: { '@acme/members': '*' } })
     symlinkSync(path.join(root, 'apps', 'members'), path.join(site, 'node_modules', '@acme', 'members'), 'dir')
     assert.deepEqual(deploymentAt(site).apps, [])
+  })
+
+  test('deploys apart when apps/monolith composes nothing', () => {
+    const root = distribution({ monolith: true })
+    rmSync(path.join(root, 'apps', 'monolith', 'next.config.ts'))
+    assert.deepEqual(distributionDeployments(root).map((deployment) => deployment.name), ['@acme/id', '@acme/members'])
   })
 
   test('will not guess what a module not checked out needs', () => {
@@ -399,6 +405,18 @@ describe('setting up Vercel', () => {
     assert.equal(kept, 'unseen')
     assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [fresh])
     assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET_CURRENT').value, 'B')
+  })
+
+  test('leaves a slot of a tied name alone in a project it is not declared for', async () => {
+    const root = distribution({ monolith: false })
+    const vercel = fakeVercel({
+      'acme-members': { ACME_ID_SERVICE_MEMBERS_SECRET_A: { production: { value: 'stale', sensitive: true, updatedAt: 0 } } },
+    })
+    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    assert.equal(vercel.value('acme-members', 'ACME_ID_SERVICE_MEMBERS_SECRET_A').value, 'stale')
+    assert.equal(vercel.value('acme-members', 'ACME_ID_SERVICE_MEMBERS_SECRET_CURRENT'), undefined)
+    const [value] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
+    assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [value])
   })
 
   test('sets a variable that is there but empty, rather than add it again', async () => {
@@ -804,6 +822,20 @@ describe('rotating', () => {
     const ambiguous = /SESSION is tied to KEY, and x and y both declare it/
     assert.throws(() => planRotation(remotes), ambiguous)
     await assert.rejects(planSetup(remotes, 'production'), ambiguous)
+  })
+
+  test('will not change or remove a variable set for other environments too', async () => {
+    const root = distribution({ monolith: true })
+    // as the dashboard adds one by default: a record for production and preview at once
+    const vercel = fakeVercel({
+      'acme-core': {
+        ACME_MEMBERS_SECRET: { production: { value: 'by-hand', sensitive: true, updatedAt: 0, shared: ['production', 'preview'] } },
+      },
+    })
+    const result = await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /ACME_MEMBERS_SECRET in acme-core is one variable for production, preview/)
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_A'), undefined)
   })
 
   test('asks first, and without anyone to ask, does nothing', async () => {

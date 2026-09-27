@@ -183,8 +183,9 @@ export const distributionDeployments = (distribution: string): Deployment[] => {
         'Run `git submodule update --init` first.'
     )
   }
+  // Where the monolith is, by name; that it is one, by its Next config.
   const monolith = path.join(distribution, 'apps', 'monolith')
-  if (existsSync(path.join(monolith, 'package.json'))) return [deploymentAt(monolith)]
+  if (existsSync(path.join(monolith, 'package.json')) && composesApps(monolith)) return [deploymentAt(monolith)]
   return submodules(distribution)
     .map((module) => envApp(module.path))
     .filter((app): app is EnvApp => app !== undefined)
