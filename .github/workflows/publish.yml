@@ -122,10 +122,14 @@ jobs:
         run: |
           git tag "$TAG"
           git push origin "$TAG"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag
+          # The notes are the changelog's section for this version, written as
+          # each pull request merged; GitHub's own where there is none.
+          if pnpm run --silent changelog notes > "$RUNNER_TEMP/notes.md"; then
+            notes="--notes-file $RUNNER_TEMP/notes.md"
+          else
+            notes="--generate-notes"
+          fi
+          gh release create "$TAG" --title "$TAG" $notes --verify-tag
 
       - name: Summary
         run: |

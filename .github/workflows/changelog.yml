@@ -1,0 +1,49 @@
+name: Changelog
+
+# Every pull request says what it changes in CHANGELOG.md, under the version
+# being worked on, with a link to itself — so that version's notes are written,
+# and committed, before it is released: whoever makes the change writes the
+# line, and review sees it with the change. Make this job a required status
+# check on main, or it only advises.
+#
+# A pull request that changes nothing anyone would read about — a lockfile
+# bump — is labelled "skip changelog".
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # to compare with what it merges into
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
+
+      # Only where fg-dist is developed in this workspace; see publish.yml.
+      - name: Build fg-dist
+        run: pnpm --filter @fairgarden/distribution run --if-present build
+
+      - name: Check for a line linking this pull request
+        run: pnpm run changelog check

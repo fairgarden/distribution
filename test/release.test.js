@@ -677,3 +677,24 @@ test('--dry-run writes nothing', async () => {
   assert.equal(existsSync(path.join(root, 'apps/widget/.github/workflows/publish.yml')), false)
   assert.equal(readFileSync(path.join(root, 'apps/widget/package.json'), 'utf8'), before)
 })
+
+test('workflows can be given to some modules only', async () => {
+  const root = distribution()
+  const updates = await writeWorkflows(root, { names: ['widget'] })
+  assert.deepEqual(updates.map((update) => update.relativePath), ['apps/widget'])
+  assert.equal(existsSync(path.join(root, 'packages/design/.github/workflows/changelog.yml')), false)
+  await assert.rejects(writeWorkflows(root, { names: ['nothing'] }), /No such module: nothing/)
+})
+
+test('a module on an older fg-dist is moved up to the one whose workflows it gets', async () => {
+  const root = distribution()
+  const file = path.join(root, 'apps/widget/package.json')
+  const manifest = JSON.parse(readFileSync(file, 'utf8'))
+  manifest.devDependencies = { '@fairgarden/distribution': '^0.0.1' }
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+
+  await writeWorkflows(root)
+  const range = JSON.parse(readFileSync(file, 'utf8')).devDependencies['@fairgarden/distribution']
+  const own = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+  assert.equal(range, `^${own}`)
+})

@@ -1,8 +1,11 @@
 # `workflows`
 
 ```bash
-fg-dist workflows [--force] [--distribution]
+fg-dist workflows [name...] [--force] [--distribution]
 ```
+
+Name modules — `fg-dist workflows id members` — to give only those theirs,
+leaving the rest, and the distribution's own check, alone.
 
 Gives every module a publishing workflow, so each one can release itself, and a
 [changelog check](/commands/changelog) on its pull requests.
@@ -68,7 +71,9 @@ release this" wherever you happen to be standing. A script the module already
 defines is left alone; it may call the tool differently on purpose.
 
 `@fairgarden/distribution` is added as a devDependency at the version of the CLI
-that wrote the files, so a module is pinned to the tool that set it up rather
+that wrote the files — or moved up to it, when a module has an older one, since
+the workflows call commands only this version has and a module's own CI
+resolves it from npm — so a module is pinned to the tool that set it up rather
 than to whatever was current when the template was last edited. The one
 exception is `@fairgarden/distribution` itself, which cannot depend on being
 published to release itself: its scripts call `node dist/cli.js`.

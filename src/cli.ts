@@ -70,7 +70,7 @@ Commands:
   extract <path>       Turn a directory here into its own repository and submodule
   use-https [name...]  Rewrite submodule urls from ssh to https
   readme               Record versions in the readmes; run in a distribution or a module
-  workflows            Give every module a publishing workflow and a changelog check;
+  workflows [name...]  Give every module a publishing workflow and a changelog check;
                        --distribution, this one a publishing workflow too
   overrides            Point the workspace at this distribution's own checkouts
   canary               Stamp a canary version into the manifest, for CI
@@ -564,9 +564,11 @@ const main = async (): Promise<number> => {
     const updates = await writeWorkflows(root, {
       force: args.force,
       dryRun: args.dryRun,
+      names: args.names,
     })
-    // The distribution checks its own changelog too, for policy changes.
-    if (isDistribution(root)) {
+    // The distribution checks its own changelog too, for policy changes —
+    // unless only some modules were named.
+    if (isDistribution(root) && args.names.length === 0) {
       updates.push(await writeDistributionChangelogCheck(root, { force: args.force, dryRun: args.dryRun }))
     }
 

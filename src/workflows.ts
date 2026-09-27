@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
+import semver from 'semver'
 import { fileURLToPath } from 'node:url'
 import { submodules } from './submodules.ts'
 import { CHANGELOG, newChangelog } from './changelog.ts'
@@ -516,6 +517,17 @@ export const updateManifest = async (
   if (packageName !== TOOL && !dependencies?.[TOOL] && !devDependencies?.[TOOL] && version) {
     updated.devDependencies = { ...devDependencies, [TOOL]: `^${version}` }
   }
+  // One that does is moved up to this version at least: the workflows written
+  // here call commands it has, and an older one — resolved from npm in the
+  // module's own CI — would not know them.
+  for (const key of ['dependencies', 'devDependencies'] as const) {
+    const list = updated[key] as Record<string, string> | undefined
+    const range = list?.[TOOL]
+    const floor = range ? semver.minVersion(range, { loose: true }) : null
+    if (packageName !== TOOL && version && floor && semver.lt(floor, version)) {
+      updated[key] = { ...list, [TOOL]: `^${version}` }
+    }
+  }
 
   const changed = JSON.stringify(updated) !== before
   if (changed && write) {
@@ -553,7 +565,16 @@ export const updateManifest = async (
  */
 export const writeWorkflows = async (
   root: string,
-  { force = false, dryRun = false }: { force?: boolean; dryRun?: boolean } = {}
+  {
+    force = false,
+    dryRun = false,
+    names = [],
+  }: {
+    force?: boolean
+    dryRun?: boolean
+    /** Only these modules, by name or path; every one when empty. */
+    names?: string[]
+  } = {}
 ): Promise<WorkflowUpdate[]> => {
   const updates: WorkflowUpdate[] = []
   // What the distribution builds with, which is what its modules are developed
@@ -562,7 +583,13 @@ export const writeWorkflows = async (
   const spec = typeof packageManager === 'string' ? packageManager : undefined
   const tool = await toolVersion()
 
+  const unknown = names.filter(
+    (name) => !submodules(root).some((submodule) => submodule.name === name || submodule.relativePath === name)
+  )
+  if (unknown.length > 0) throw new Error(`No such module: ${unknown.join(', ')}.`)
+
   for (const submodule of submodules(root)) {
+    if (names.length > 0 && !names.includes(submodule.name) && !names.includes(submodule.relativePath)) continue
     const name = (await readManifest(submodule.path))?.name
     if (typeof name !== 'string') continue
 

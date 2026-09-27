@@ -32,7 +32,8 @@
     "test": "node --test test/*.test.js",
     "canary": "node dist/cli.js canary",
     "release": "node dist/cli.js release",
-    "release:check": "node dist/cli.js release --check"
+    "release:check": "node dist/cli.js release --check",
+    "changelog": "node dist/cli.js changelog"
   },
   "dependencies": {
     "@babel/parser": "^7.29.9",
