@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import semver from 'semver'
-import { calendarVersion } from './scaffold.ts'
 import { submodules, uninitialised } from './submodules.ts'
 
 /**
@@ -57,24 +55,6 @@ export const shippedModules = (root: string): PublishedModules => {
   }
   return modules
 }
-
-/**
- * A version npm will take as it is.
- *
- * A distribution is versioned by date, and `2026.09.26` is not semver — npm
- * would publish it as `2026.9.26` anyway — so it is written that way to begin
- * with, and the registry and the manifest spell it the same.
- */
-export const publishableVersion = (version: string): string => {
-  const cleaned = semver.clean(version, { loose: true })
-  if (!cleaned) {
-    throw new Error(`${version} is not a version npm can publish; a distribution's is its date, like 2026.9.26.`)
-  }
-  return cleaned
-}
-
-/** Today's date as a distribution's version. */
-export const releaseVersion = (on: Date = new Date()): string => calendarVersion(on)
 
 /**
  * Write what the distribution ships into its manifest, ready to publish.

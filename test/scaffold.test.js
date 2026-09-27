@@ -11,6 +11,7 @@ import {
   isEmpty,
 } from '../dist/scaffold.js'
 import { nameFromUrl, findMonolith } from '../dist/add-module.js'
+import { firstRelease } from '../dist/calver.js'
 
 const scaffold = async (files) => {
   const root = mkdtempSync(path.join(tmpdir(), 'scaffold-'))
@@ -183,12 +184,11 @@ test('a distribution can have no monolith, for apps deployed separately', async 
   assert.match(readFileSync(path.join(root, 'Readme.md'), 'utf8'), /deployed on its own/)
 })
 
-test('a distribution is versioned by date, not semver', async () => {
+test("a distribution starts at this month's first release, in alpha", async () => {
   const root = await scaffold(distributionRepo('@acme/core'))
   const { version } = readJson(root, 'package.json')
-  assert.match(version, /^\d{4}\.\d{1,2}\.\d{1,2}$/)
-  // and one npm publishes as it is
-  assert.equal(version.split('.').some((part) => part.startsWith('0')), false)
+  assert.match(version, /^\d{2}\.\d{2}\.01-alpha\.0$/)
+  assert.equal(version, firstRelease())
 })
 
 test('a distribution records what it extends', async () => {

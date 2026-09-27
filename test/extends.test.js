@@ -17,7 +17,7 @@ const distribution = ({ modules, extendsName, parent }) => {
     path.join(root, 'package.json'),
     JSON.stringify({
       name: '@acme/core',
-      version: '2024.06.01',
+      version: '24.06.01',
       dependencies: { ...modules, ...(extendsName ? { [extendsName]: 'latest' } : {}) },
       ...(extendsName ? { distribution: { extends: extendsName } } : {}),
     })
@@ -45,7 +45,7 @@ test('reads the modules a distribution ships, excluding its parent', () => {
     extendsName: '@fg/core',
   })
   const read = readDistribution(root)
-  assert.equal(read.version, '2024.06.01')
+  assert.equal(read.version, '24.06.01')
   assert.equal(read.extends, '@fg/core')
   assert.deepEqual(read.modules, { '@fg/id': '1.2.3' })
 })
@@ -170,7 +170,7 @@ const withSubmodule = (moduleVersion) => {
     path.join(root, 'package.json'),
     JSON.stringify({
       name: '@acme/core',
-      version: '2024.06.01',
+      version: '24.06.01',
       // No module versions here: the submodule is the pin.
       dependencies: { '@fairgarden/core': 'latest' },
       distribution: { extends: '@fairgarden/core' },
@@ -215,7 +215,7 @@ test('ignores workspace links, which name no version', () => {
     path.join(root, 'package.json'),
     JSON.stringify({
       name: '@acme/core',
-      version: '2024.06.01',
+      version: '24.06.01',
       dependencies: { '@fg/id': 'workspace:*', '@fg/design': 'link:../design' },
     })
   )

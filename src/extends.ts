@@ -8,7 +8,7 @@ import { submodules } from './submodules.ts'
 /**
  * A distribution is a manifest: its dependencies are the modules it ships, each
  * pinned to a version. End users consume the distribution, which is versioned
- * by date; developers consume the modules, which are versioned by semver.
+ * by month and release; developers consume the modules, which are versioned by semver.
  *
  * One distribution may extend another. The extension ships the parent's modules
  * and may move ahead of it, but can never ship a module older than the parent

@@ -9,8 +9,8 @@ import { inspectExtends } from '../dist/extends.js'
 import { forkModule, integrate } from '../dist/forks.js'
 import { inherit } from '../dist/inherit.js'
 import { stampModules } from '../dist/manifest.js'
+import { firstRelease, npmVersion } from '../dist/calver.js'
 import { checkReleasable, releaseDistribution } from '../dist/release.js'
-import { calendarVersion } from '../dist/scaffold.js'
 import { inspect, submodules } from '../dist/submodules.js'
 import { writeDistributionWorkflow } from '../dist/workflows.js'
 
@@ -82,7 +82,7 @@ const setup = () => {
   const kitFork = path.join(base, 'kit-fork.git')
   git(base, ['clone', '-q', '--bare', kit.bare, kitFork])
 
-  const parent = distribution(base, 'fair-core', { name: '@fair/core', version: '2026.9.1' })
+  const parent = distribution(base, 'fair-core', { name: '@fair/core', version: '26.09.01-alpha.0' })
   git(parent, ['submodule', 'add', '-q', widget.bare, 'apps/widget'])
   git(parent, ['submodule', 'add', '-q', kit.bare, 'packages/kit'])
   forkModule(parent, submodules(parent).find((s) => s.name === 'kit'), kitFork)
@@ -91,8 +91,8 @@ const setup = () => {
 
   const child = distribution(base, 'acme-core', {
     name: '@acme/core',
-    version: '2026.9.2',
-    dependencies: { '@fair/core': '2026.9.1' },
+    version: '26.09.01-alpha.0',
+    dependencies: { '@fair/core': '26.9.1-alpha.0' },
     distribution: { extends: '@fair/core' },
   })
 
@@ -108,7 +108,7 @@ const setup = () => {
 
 test('a published distribution records every module: version, place, repository, commit', async () => {
   const { parent, widget, kit, kitFork } = setup()
-  const modules = await stampModules(parent, { version: '2026.9.1' })
+  const modules = await stampModules(parent, { version: '26.9.1-alpha.0' })
   const pinned = (name) => submodules(parent).find((s) => s.name === name).pinned
 
   assert.deepEqual(modules, {
@@ -142,6 +142,9 @@ test('an extension inherits what its parent ships, forks included, and passes th
   assert.equal(ourKit.upstream, kit.bare)
 
   assert.deepEqual(inspectExtends(child).violations, [])
+  const log = readFileSync(path.join(child, 'CHANGELOG.md'), 'utf8')
+  assert.match(log, /- `@fair\/widget` 1\.0\.0 added, as @fair\/core ships it, from /)
+  assert.match(log, /- `@fair\/kit` 1\.0\.0 added, as @fair\/core ships it, from .*kit-fork\.git, a fork of .*kit\.git/)
   const again = await inherit(child)
   assert.deepEqual(again.added, [])
   assert.deepEqual(again.shipped.sort(), ['@fair/kit', '@fair/widget'])
@@ -175,36 +178,62 @@ test("an extension's own fork keeps up with a parent that moves ahead", async ()
   assert.ok(existsSync(path.join(ours, 'lib/ours.ts')))
 })
 
-test('a distribution publishes a canary of today, recording what it ships', async () => {
+test('a distribution publishes a canary of its next release, recording what it ships', async () => {
   const { parent } = setup()
+  write(parent, { 'package.json': { name: '@fair/core', version: firstRelease() } })
   const result = await stampCanary(parent, { sha: 'abc', published: {} })
-  assert.equal(result.version, `${calendarVersion()}-0.canary.0`)
+  assert.equal(result.version, `${npmVersion(firstRelease()).split('-')[0]}-0.canary.0`)
   const manifest = readJson(path.join(parent, 'package.json'))
   assert.equal(manifest.version, result.version)
   assert.deepEqual(Object.keys(manifest.distribution.modules).sort(), ['@fair/kit', '@fair/widget'])
 })
 
-test('a distribution is released under the date, once a day, spelled as npm publishes it', async () => {
+test('a distribution publishes its version as npm spells it, and tags it as it is written', async () => {
   const { parent } = setup()
-  const on = new Date('2026-10-05T12:00:00Z')
-  assert.deepEqual(await releaseDistribution(parent, { on }), {
-    name: '@fair/core',
-    version: '2026.10.5',
-    tag: 'v2026.10.5',
-  })
-  assert.equal(readJson(path.join(parent, 'package.json')).version, '2026.10.5')
-  git(parent, ['tag', 'v2026.10.5'])
-  await assert.rejects(releaseDistribution(parent, { on }), /next release is tomorrow/)
-
-  write(parent, { 'package.json': { name: '@fair/core', version: '2026.10.06' } })
+  write(parent, { 'package.json': { name: '@fair/core', version: firstRelease() } })
   const releasable = await checkReleasable(parent, { published: () => undefined })
-  assert.equal(releasable.version, '2026.10.6')
+  assert.equal(releasable.version, npmVersion(firstRelease()))
+  assert.equal(releasable.tag, `v${firstRelease()}`)
+
+  // A release of a month that is over is moved on first.
+  write(parent, { 'package.json': { name: '@fair/core', version: '20.01.01-alpha.0' } })
+  await assert.rejects(checkReleasable(parent, { published: () => undefined }), /month that is over/)
+  write(parent, { 'package.json': { name: '@fair/core', version: '2026.9.27' } })
+  await assert.rejects(checkReleasable(parent, { published: () => undefined }), /not a distribution version/)
+})
+
+test('releasing moves a distribution on: the next alpha, and a new month from the start', async () => {
+  const { parent } = setup()
+  const september = new Date('2026-09-20T12:00:00Z')
+  const october = new Date('2026-10-02T12:00:00Z')
+  const nothing = () => undefined
+  write(parent, { 'package.json': { name: '@fair/core', version: '26.09.01-alpha.0' } })
+
+  // Not published yet: it is what goes out next.
+  let next = await releaseDistribution(parent, { on: september, published: nothing })
+  assert.deepEqual([next.published, next.version], [false, '26.09.01-alpha.0'])
+
+  // Published — the workflow tagged it — so it moves on to the next alpha.
+  git(parent, ['tag', 'v26.09.01-alpha.0'])
+  next = await releaseDistribution(parent, { on: september, published: nothing })
+  assert.deepEqual([next.published, next.version], [true, '26.09.01-alpha.1'])
+  assert.equal(readJson(path.join(parent, 'package.json')).version, '26.09.01-alpha.1')
+
+  // Never published, and the month has turned: October's first release.
+  next = await releaseDistribution(parent, { on: october, published: nothing })
+  assert.deepEqual([next.published, next.version], [false, '26.10.01-alpha.0'])
+
+  // On to beta, then stable, when asked.
+  next = await releaseDistribution(parent, { on: october, id: 'beta', published: nothing })
+  assert.equal(next.version, '26.10.01-beta.0')
+  next = await releaseDistribution(parent, { on: october, stable: true, dryRun: true, published: nothing })
+  assert.equal(next.version, '26.10.01')
 })
 
 test("a distribution's own workflow publishes it with its submodules and its policy", async () => {
   const { parent } = setup()
   write(parent, {
-    'package.json': { name: '@fair/core', version: '2026.9.1', private: true },
+    'package.json': { name: '@fair/core', version: '26.09.01-alpha.0', private: true },
     'policies/.manifest': '{}',
   })
   const update = await writeDistributionWorkflow(parent)

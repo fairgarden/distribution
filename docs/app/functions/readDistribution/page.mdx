@@ -10,7 +10,7 @@ Reads what a distribution ships.
 readDistribution('/repos/acme')
 // {
 //   name: '@acme/core',
-//   version: '2024.12.01',
+//   version: '24.12.01',
 //   modules: { '@fg/id': '1.4.0', '@fg/design': '1.5.6' },
 //   extends: '@fairgarden/core',
 // }
@@ -34,7 +34,7 @@ Either way the parent is excluded, and so is anything depended on with
 | Field | |
 | --- | --- |
 | `name` | from `package.json`, falling back to the directory name |
-| `version` | the date-based version |
+| `version` | its version: `YY.MM.NN`, the month and the release of it |
 | `modules` | module name to version |
 | `extends` | from `distribution.extends`, when set |
 

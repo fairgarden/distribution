@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
-import { writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
+import { writeDistributionChangelogCheck, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
   checkReleasable,
@@ -29,6 +29,16 @@ import {
 import { describeViolations, inspectExtends } from './extends.ts'
 import { contribute, forkModule, integrate, unforkModule } from './forks.ts'
 import { inherit } from './inherit.ts'
+import {
+  bumpEntry,
+  checkChangelog,
+  CHANGELOG,
+  moduleLabel,
+  noteInDistribution,
+  notesFor,
+  pullRequestFromActions,
+  releaseNotesUrl,
+} from './changelog.ts'
 import { buildPolicy, findPolicy, POLICIES, setupTurbo, testPolicy, usePolicy } from './policy.ts'
 import { stampModules } from './manifest.ts'
 import {
@@ -60,7 +70,8 @@ Commands:
   extract <path>       Turn a directory here into its own repository and submodule
   use-https [name...]  Rewrite submodule urls from ssh to https
   readme               Record versions in the readmes; run in a distribution or a module
-  workflows            Give every module a publishing workflow; --distribution, this one
+  workflows            Give every module a publishing workflow and a changelog check;
+                       --distribution, this one a publishing workflow too
   overrides            Point the workspace at this distribution's own checkouts
   canary               Stamp a canary version into the manifest, for CI
   release              Move a module on from the release it just published
@@ -72,6 +83,8 @@ Commands:
   fork <name> <url>    Check a module out from your fork, keeping where it came from
   contribute <name>    Push the module's branch and open a pull request upstream
   unfork <name>        Go back to the upstream a fork came from, once it has the fork's work
+  changelog check      Fail a pull request that adds no changelog line linking itself (CI)
+  changelog notes [v]  Print a version's changelog section, for its release notes
   policy build         Build the organization's policy: policies/, on every module's own
   policy test          Test each module's rules, then the organization's on top of them
   policy use           Put the built policy beside this service, for it to run
@@ -83,6 +96,7 @@ Options:
   --minor              Release the next minor, or branch one (release, prerelease)
   --patch              Release the next patch, staying on this line (release)
   --id <name>          Prerelease identifier: alpha, beta, rc (release, prerelease)
+  --stable             A distribution's release leaves its prerelease stages (release)
   --no-fetch           Use the refs already fetched (sync, bump)
   --dry-run            Report what would change without changing it
   --check              Verify instead of writing (readme, release, overrides)
@@ -100,7 +114,9 @@ Options:
   --distribution       Publish the distribution itself, for others to extend (workflows)
   --no-push            Push nothing and open no pull request (release, fork, contribute, bump)
   --to <ref>           Upstream tag, branch or commit to go back to (unfork)
-  --base <branch>      Branch the pull request goes into (contribute)
+  --base <branch>      Branch the pull request goes into (contribute); what it merges into (changelog check)
+  --pr <number>        The pull request to check, outside GitHub Actions (changelog check)
+  --repo <owner/name>  The repository its link names, outside GitHub Actions (changelog check)
   --out <file>         Where policy build writes the bundle (default: policies/dist/)
 `
 
@@ -129,6 +145,9 @@ interface Args {
   to: string | undefined
   base: string | undefined
   distribution: boolean
+  stable: boolean
+  pr: number | undefined
+  repo: string | undefined
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -157,6 +176,9 @@ const parseArgs = (argv: string[]): Args => {
     to: undefined,
     base: undefined,
     distribution: false,
+    stable: false,
+    pr: undefined,
+    repo: undefined,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -200,6 +222,12 @@ const parseArgs = (argv: string[]): Args => {
       args.force = true
     } else if (arg === '--no-push') {
       args.push = false
+    } else if (arg === '--pr') {
+      args.pr = Number(argv[++index])
+    } else if (arg === '--repo') {
+      args.repo = argv[++index]
+    } else if (arg === '--stable') {
+      args.stable = true
     } else if (arg === '--distribution') {
       args.distribution = true
     } else if (arg === '--to') {
@@ -537,6 +565,10 @@ const main = async (): Promise<number> => {
       force: args.force,
       dryRun: args.dryRun,
     })
+    // The distribution checks its own changelog too, for policy changes.
+    if (isDistribution(root)) {
+      updates.push(await writeDistributionChangelogCheck(root, { force: args.force, dryRun: args.dryRun }))
+    }
 
     if (updates.length === 0) {
       process.stdout.write(
@@ -683,12 +715,30 @@ const main = async (): Promise<number> => {
     }
 
     if (isDistribution(root)) {
-      const { name, version, tag } = await releaseDistribution(root, { dryRun: args.dryRun })
+      if (args.bump) {
+        process.stderr.write(
+          "A distribution's version is its month and its release: move it with " +
+            '--id <alpha|beta|rc> or --stable, or neither to carry on as it is.\n'
+        )
+        return 1
+      }
+      const next = await releaseDistribution(root, {
+        dryRun: args.dryRun,
+        id: args.id,
+        stable: args.stable,
+      })
+      const verb = args.dryRun ? 'Would move' : 'Moved'
       process.stdout.write(
-        `${args.dryRun ? 'Would version' : 'Versioned'} ${name} ${version}, today's date.\n` +
-          'Commit it, then run the publish workflow, which publishes it with the modules it ' +
-          `ships and tags ${tag}.\n`
+        next.version === next.from
+          ? `${next.name} ${next.from} is not published yet; it is what the publish workflow releases next.\n`
+          : `${next.published ? `${next.from} is published. ` : `${next.from} was never published. `}` +
+              `${verb} ${next.name} to ${next.version}.\n`
       )
+      if (!args.dryRun && next.version !== next.from) {
+        process.stdout.write(
+          `Commit it, then run the publish workflow, which publishes it and tags v${next.version}.\n`
+        )
+      }
       return 0
     }
 
@@ -1133,6 +1183,10 @@ const main = async (): Promise<number> => {
       }
       if (!state.fork) {
         moveTo(state.submodule, to)
+        noteInDistribution(
+          root,
+          bumpEntry(moduleLabel(state.submodule.path).name, from, to, releaseNotesUrl(state.submodule.url, to))
+        )
         process.stdout.write(`${line}\n`)
         continue
       }
@@ -1187,6 +1241,51 @@ const main = async (): Promise<number> => {
         : `\nShips what ${result.parent}@${result.parentVersion} ships. Run pnpm install, then commit.\n`
     )
     return result.blocked.length > 0 ? 1 : 0
+  }
+
+
+  if (args.command === 'changelog') {
+    const [action, version] = args.names
+    const root = repositoryRoot(args.cwd) ?? args.cwd
+
+    if (action === 'check') {
+      const actions = pullRequestFromActions()
+      const pullRequest = args.pr ?? actions.pullRequest
+      const base = args.base ?? actions.base
+      const repository = args.repo ?? actions.repository
+      if (!pullRequest || !base || !repository) {
+        process.stderr.write(
+          'changelog check runs on a pull request: in GitHub Actions, or given ' +
+            '--pr <number> --base <ref> --repo <owner/name>.\n'
+        )
+        return 1
+      }
+      const result = checkChangelog(root, {
+        pullRequest,
+        base,
+        repository,
+        distribution: isDistribution(root),
+        labels: actions.labels,
+        server: actions.server,
+      })
+      ;(result.ok ? process.stdout : process.stderr).write(`${result.message}\n`)
+      return result.ok ? 0 : 1
+    }
+
+    if (action === 'notes') {
+      const wanted = version ?? (JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version as string)
+      const text = await readFile(path.join(root, CHANGELOG), 'utf8').catch(() => '')
+      const notes = notesFor(text, wanted)
+      if (!notes) {
+        process.stderr.write(`${CHANGELOG} says nothing for ${wanted}.\n`)
+        return 1
+      }
+      process.stdout.write(notes)
+      return 0
+    }
+
+    process.stderr.write('changelog needs `check` or `notes`.\n')
+    return 1
   }
 
 

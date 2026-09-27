@@ -20,7 +20,7 @@ const write = (root, files) => {
 const distribution = () => {
   const root = mkdtempSync(path.join(tmpdir(), 'dist-policy-'))
   write(root, {
-    'package.json': { name: '@acme/core', version: '2026.10.01', distribution: { extends: '@fair/core' } },
+    'package.json': { name: '@acme/core', version: '26.10.01', distribution: { extends: '@fair/core' } },
     'turbo.json': { tasks: { build: { dependsOn: ['^build'], outputs: ['.next/**'] } } },
     'policies/.manifest': { metadata: { organization: 'Acme' } },
     'policies/package.json': { name: '@acme/core-policies', private: true },
@@ -61,7 +61,7 @@ test("it is built on every module's own rules, and on what it extends", () => {
   const policy = findPolicy(path.join(root, 'apps/id'))
   assert.deepEqual(policy.bases, [path.join(root, 'apps/id/policies'), path.join(root, 'apps/members/policies')])
   assert.deepEqual(policy.parents, [path.join(root, 'node_modules/@fair/core/policies')])
-  assert.equal(policy.version, '2026.10.01')
+  assert.equal(policy.version, '26.10.01')
 })
 
 test('a service takes a copy to run, built when there is none or it is out of date', () => {
@@ -78,7 +78,7 @@ test('a service takes a copy to run, built when there is none or it is out of da
     '--base', 'apps/id/policies',
     '--base', 'apps/members/policies',
     '--parent', 'node_modules/@fair/core/policies',
-    '--release', '2026.10.01',
+    '--release', '26.10.01',
     '--out', path.join(root, 'policies/dist/policies.tar.gz'),
   ])
 

@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
-import { releaseVersion, stampModules } from './manifest.ts'
+import { assertCalendarVersion, npmVersion } from './calver.ts'
+import { stampModules } from './manifest.ts'
 import { isDistribution } from './submodules.ts'
 
 /** Ask npm about a published version, returning undefined when it says nothing. */
@@ -126,10 +127,11 @@ export const stampCanary = async (
     }
   }
 
-  // A distribution is versioned by the date it is released, so its canary is
-  // one of today's, and it records what it ships as it is published.
+  // A distribution's version is spelled as npm does, and it records what it
+  // ships as it is published.
   const distribution = isDistribution(root)
-  const version = nextCanary(distribution ? releaseVersion() : manifest.version, current.version)
+  if (distribution) assertCalendarVersion(manifest.version)
+  const version = nextCanary(distribution ? npmVersion(manifest.version) : manifest.version, current.version)
 
   if (!dryRun) {
     if (distribution) {

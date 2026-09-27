@@ -7,8 +7,8 @@ would mean shipping a regression.
 ```json
 {
   "name": "@acme/core",
-  "version": "2024.12.1",
-  "dependencies": { "@fairgarden/core": "2024.6.1" },
+  "version": "26.09.01",
+  "dependencies": { "@fairgarden/core": "26.6.1" },
   "distribution": { "extends": "@fairgarden/core" }
 }
 ```
@@ -68,7 +68,7 @@ publishes itself:
 
 ```bash
 fg-dist workflows --distribution   # once: the publish workflow, and public on npm
-fg-dist release                    # version it by today's date, then run the workflow
+fg-dist release                    # the version it publishes next, then run the workflow
 ```
 
 What it publishes is its manifest — recording each module's version, place,

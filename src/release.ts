@@ -4,7 +4,14 @@ import path from 'node:path'
 import semver from 'semver'
 import { isPublic } from './canary.ts'
 import { writeReadmes } from './readme.ts'
-import { publishableVersion, releaseVersion } from './manifest.ts'
+import { moveSection, openSection } from './changelog.ts'
+import {
+  assertCalendarVersion,
+  isFromPastMonth,
+  monthOf,
+  nextCalendarVersion,
+  npmVersion,
+} from './calver.ts'
 import { isDistribution } from './submodules.ts'
 
 /** Run git, returning undefined rather than throwing when it fails. */
@@ -239,38 +246,68 @@ const writeVersion = async (root: string, version: string): Promise<void> => {
   await writeFile(manifestPath(root), setVersion(source, version))
 }
 
-/** A distribution is versioned by date and releases by moving submodule pins. */
+/** A distribution is versioned by month and release, and releases by moving submodule pins. */
 const assertModule = (root: string): void => {
   if (isDistribution(root)) {
     throw new ReleaseError(
-      'This is a distribution, not a module. A distribution is versioned by date; ' +
-        'release its modules individually, then `fg-dist bump` to take them.'
+      'This is a distribution, not a module. Its version is YY.MM.NN, which `fg-dist release` ' +
+        'moves on; release its modules individually, then `fg-dist bump` to take them.'
     )
   }
 }
 
+export interface DistributionRelease {
+  name: string
+  /** The version in the manifest before. */
+  from: string
+  /** Whether that was published already. */
+  published: boolean
+  /** The version the publish workflow releases next. */
+  version: string
+}
+
 /**
- * Release a distribution: version it by today's date, for the publish workflow
- * to publish. Nothing branches: a distribution has no lines to maintain, only
- * the modules it pins, and those are released on their own.
+ * Set the version a distribution publishes next — see calver.ts for the shape.
  *
- * Once a day at most — the date is the version.
+ * Run after publishing, it moves on; run again when the month has turned, it
+ * moves a release not yet published to this month's first. Nothing branches:
+ * a distribution has no lines of its own, only the modules it pins, and those
+ * are released on their own.
  */
 export const releaseDistribution = async (
   root: string,
-  { dryRun = false, on }: { dryRun?: boolean; on?: Date } = {}
-): Promise<{ name: string; version: string; tag: string }> => {
+  {
+    dryRun = false,
+    on,
+    id,
+    stable,
+    published: lookup = onNpm,
+  }: {
+    dryRun?: boolean
+    on?: Date
+    id?: string
+    stable?: boolean
+    published?: (spec: string) => string | undefined
+  } = {}
+): Promise<DistributionRelease> => {
   const manifest = JSON.parse(await readFile(manifestPath(root), 'utf8'))
-  const version = releaseVersion(on)
-  const tag = `v${version}`
-  if (git(root, ['rev-parse', '--verify', `refs/tags/${tag}`])) {
-    throw new ReleaseError(
-      `${tag} already exists. A distribution is versioned by the date it is released, ` +
-        'so the next release is tomorrow.'
-    )
+  const from: string = manifest.version
+  assertCalendarVersion(from)
+  // Tagged by the workflow once it has published; npm has it either way.
+  const published =
+    git(root, ['rev-parse', '--verify', `refs/tags/v${from}`]) !== undefined ||
+    lookup(`${manifest.name}@${npmVersion(from)}`) !== undefined
+  let version: string
+  try {
+    version = nextCalendarVersion(from, { published, on, id, stable })
+  } catch (error) {
+    throw new ReleaseError(error instanceof Error ? error.message : String(error))
   }
-  if (!dryRun && manifest.version !== version) await writeVersion(root, version)
-  return { name: manifest.name, version, tag }
+  if (!dryRun && version !== from) {
+    await writeVersion(root, version)
+    await moveSection(root, from, version, { published })
+  }
+  return { name: manifest.name, from, published, version }
 }
 
 /** Read the release the repository is standing on, without changing anything. */
@@ -324,6 +361,8 @@ const branchExists = (root: string, branch: string): boolean =>
 /** Record the version in the readme, so it is visible where people browse. */
 const recordVersion = async (root: string): Promise<void> => {
   await writeReadmes(root)
+  // The next version's changes go under a section of its own.
+  await openSection(root)
 }
 
 const commitAll = (root: string, message: string): void => {
@@ -487,10 +526,23 @@ export const checkReleasable = async (
   if (typeof name !== 'string' || typeof manifest.version !== 'string') {
     throw new ReleaseError('package.json needs a name and a version to release.')
   }
-  // A distribution's date is spelled as npm will publish it.
-  const version = isDistribution(root) ? publishableVersion(manifest.version) : manifest.version
+  // A distribution's version names the month it is published in, and npm
+  // spells it without the zeros; its tag keeps them.
+  const distribution = isDistribution(root)
+  if (distribution) {
+    assertCalendarVersion(manifest.version)
+    if (isFromPastMonth(manifest.version)) {
+      const { year, month } = monthOf()
+      throw new ReleaseError(
+        `${manifest.version} is a release of a month that is over, and it is ` +
+          `${String(year).padStart(2, '0')}.${String(month).padStart(2, '0')} now. ` +
+          "Run `fg-dist release`, which moves it to this month's first release, and commit it."
+      )
+    }
+  }
+  const version = distribution ? npmVersion(manifest.version) : manifest.version
 
-  const tag = `v${version}`
+  const tag = `v${manifest.version}`
 
   // The workflow tags after it publishes, so a tag that is already here means
   // a red job *after* an irreversible publish — and a later release would cut

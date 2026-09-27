@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { submodules } from './submodules.ts'
+import { CHANGELOG, newChangelog } from './changelog.ts'
 import type { Files } from './scaffold.ts'
 
 /**
@@ -139,10 +140,14 @@ jobs:
         run: |
           git tag "\$TAG"
           git push origin "\$TAG"
-          gh release create "\$TAG" \\
-            --title "\$TAG" \\
-            --generate-notes \\
-            --verify-tag
+          # The notes are the changelog's section for this version, written as
+          # each pull request merged; GitHub's own where there is none.
+          if pnpm run --silent changelog notes > "\$RUNNER_TEMP/notes.md"; then
+            notes="--notes-file \$RUNNER_TEMP/notes.md"
+          else
+            notes="--generate-notes"
+          fi
+          gh release create "\$TAG" --title "\$TAG" \$notes --verify-tag
 
       - name: Summary
         run: |
@@ -298,8 +303,8 @@ ${distributionSetup(false)}
 ${distributionSetup(true)}
       - name: Stamp what it ships
         id: version
-        # Refuses when this date is already on npm: \`fg-dist release\` versions
-        # the distribution by the day it is released.
+        # Refuses when this version is on npm already, or names a month that
+        # is over: \`fg-dist release\` moves the distribution on.
         run: pnpm run release:check
 
       - name: Publish to npm
@@ -321,11 +326,80 @@ ${distributionSetup(true)}
         run: |
           git tag "\$TAG"
           git push origin "\$TAG"
-          gh release create "\$TAG" --title "\$TAG" --generate-notes --verify-tag
+          # The changelog's section for this version: the modules it moved,
+          # and what changed in the organization's policy.
+          if pnpm run --silent changelog notes > "\$RUNNER_TEMP/notes.md"; then
+            notes="--notes-file \$RUNNER_TEMP/notes.md"
+          else
+            notes="--generate-notes"
+          fi
+          gh release create "\$TAG" --title "\$TAG" \$notes --verify-tag
 
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\`." >> "\$GITHUB_STEP_SUMMARY"
+`,
+  ...changelogWorkflow({ submodules: true }),
+})
+
+/**
+ * The pull request check that keeps a changelog current.
+ *
+ * Every pull request has to add a line linking itself under the version being
+ * worked on — or, in a distribution, every one that changes the
+ * organization's policy — so a release's notes are written, and committed,
+ * before it is released. A distribution is checked out with its submodules,
+ * without which its workspace does not install.
+ */
+export const changelogWorkflow = ({ submodules }: { submodules: boolean }): Files => ({
+  '.github/workflows/changelog.yml': `name: Changelog
+
+# Every pull request says what it changes in CHANGELOG.md, under the version
+# being worked on, with a link to itself — so that version's notes are written,
+# and committed, before it is released. \`fg-dist contribute\` adds the line for
+# you. Make this job a required status check on main, or it only advises.
+#
+# A pull request that changes nothing anyone would read about — a lockfile
+# bump — is labelled "skip changelog".
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # to compare with what it merges into${submodules ? '\n          submodules: true # a distribution does not install without them' : ''}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
+
+      # Only where fg-dist is developed in this workspace; see publish.yml.
+      - name: Build fg-dist
+        run: pnpm --filter @fairgarden/distribution run --if-present build
+
+      - name: Check for a line linking this pull request
+        run: pnpm run changelog check
 `,
 })
 
@@ -380,6 +454,7 @@ export const releaseScripts = (packageName: string): Record<string, string> => {
     canary: `${cli} canary`,
     release: `${cli} release`,
     'release:check': `${cli} release --check`,
+    changelog: `${cli} changelog`,
   }
 }
 
@@ -490,28 +565,20 @@ export const writeWorkflows = async (
     const name = (await readManifest(submodule.path))?.name
     if (typeof name !== 'string') continue
 
-    const workflow = path.join(submodule.path, '.github/workflows/publish.yml')
-    if (existsSync(workflow) && !force) {
-      updates.push({
-        relativePath: submodule.relativePath,
-        files: [],
-        skipped: true,
-        unprivated: false,
-        missingFiles: false,
-        missingAccess: false,
-      })
-      continue
-    }
-
+    // File by file: a module that publishes already still gets the changelog
+    // check it lacks, and what it has is only replaced when forced.
     const written: string[] = []
-    for (const [relative, contents] of Object.entries(publishWorkflow(name))) {
+    const files = { ...publishWorkflow(name), ...changelogWorkflow({ submodules: false }) }
+    for (const [relative, contents] of Object.entries(files)) {
       const full = path.join(submodule.path, relative)
+      if (existsSync(full) && !force) continue
       if (!dryRun) {
         await mkdir(path.dirname(full), { recursive: true })
         await writeFile(full, contents)
       }
       written.push(relative)
     }
+    if (await startChangelog(submodule.path, dryRun)) written.push(CHANGELOG)
 
     // An earlier version of this command shipped the canary stamper as a file
     // in the module. It is a CLI command now, and a stale copy of it would go
@@ -535,7 +602,7 @@ export const writeWorkflows = async (
     updates.push({
       relativePath: submodule.relativePath,
       files: written.sort(),
-      skipped: false,
+      skipped: written.length === 0,
       unprivated: manifest.unprivated,
       missingFiles: manifest.missingFiles,
       missingAccess: manifest.missingAccess,
@@ -577,6 +644,8 @@ export const writeDistributionWorkflow = async (
     written.push(relative)
   }
 
+  if (await startChangelog(root, dryRun)) written.push(CHANGELOG)
+
   const packageManager = typeof manifest?.packageManager === 'string' ? manifest.packageManager : undefined
   const change = await updateManifest(root, name, await toolVersion(), packageManager, { write: !dryRun })
   if (change.changed) written.push('package.json')
@@ -598,5 +667,76 @@ export const writeDistributionWorkflow = async (
     unprivated: change.unprivated,
     missingFiles,
     missingAccess: change.missingAccess,
+  }
+}
+
+/**
+ * Start a repository's changelog at the version it carries, unless it keeps one
+ * already: a changelog is history, and is never written over.
+ */
+const startChangelog = async (root: string, dryRun: boolean): Promise<boolean> => {
+  const file = path.join(root, CHANGELOG)
+  if (existsSync(file)) return false
+  const version = (await readManifest(root))?.version
+  if (typeof version !== 'string') return false
+  if (!dryRun) await writeFile(file, newChangelog(version))
+  return true
+}
+
+/**
+ * Give the distribution itself the changelog check, for pull requests that
+ * change the organization's policy — what else changes in it, fg-dist notes
+ * itself. Unlike its publishing, this makes nothing public.
+ */
+export const writeDistributionChangelogCheck = async (
+  root: string,
+  { force = false, dryRun = false }: { force?: boolean; dryRun?: boolean } = {}
+): Promise<WorkflowUpdate> => {
+  const written: string[] = []
+  for (const [relative, contents] of Object.entries(changelogWorkflow({ submodules: true }))) {
+    const full = path.join(root, relative)
+    if (existsSync(full) && !force) continue
+    if (!dryRun) {
+      await mkdir(path.dirname(full), { recursive: true })
+      await writeFile(full, contents)
+    }
+    written.push(relative)
+  }
+  if (await startChangelog(root, dryRun)) written.push(CHANGELOG)
+
+  // The script the check runs, and the tool it runs — nothing that publishes.
+  const manifest = await readManifest(root)
+  if (manifest) {
+    const scripts = { ...(manifest.scripts as Record<string, string> | undefined) }
+    const dev = { ...(manifest.devDependencies as Record<string, string> | undefined) }
+    const deps = manifest.dependencies as Record<string, string> | undefined
+    const tool = await toolVersion()
+    let changed = false
+    if (!scripts.changelog) {
+      scripts.changelog = releaseScripts(String(manifest.name ?? '')).changelog
+      changed = true
+    }
+    if (!dev[TOOL] && !deps?.[TOOL] && tool) {
+      dev[TOOL] = `^${tool}`
+      changed = true
+    }
+    if (changed) {
+      if (!dryRun) {
+        await writeFile(
+          path.join(root, 'package.json'),
+          `${JSON.stringify({ ...manifest, scripts, devDependencies: dev }, null, 2)}\n`
+        )
+      }
+      written.push('package.json')
+    }
+  }
+
+  return {
+    relativePath: '.',
+    files: written.sort(),
+    skipped: written.length === 0,
+    unprivated: false,
+    missingFiles: false,
+    missingAccess: false,
   }
 }

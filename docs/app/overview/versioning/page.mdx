@@ -3,14 +3,34 @@
 Two audiences want different things from a version number, so a distribution
 gives them different ones.
 
-## Dates for end users
+## Months for end users
 
-End users want to know their copy is current. `2023.12.01` against a latest of
-`2024.12.01` says a year has passed, immediately. `1.1.1` against `1.2.1` says
-nothing about time, and secure software needs regular updates — so bumping
+End users want to know their copy is current. `25.12.01` against a latest of
+`26.09.01` says nine months have passed, immediately. `1.1.1` against `1.2.1`
+says nothing about time, and secure software needs regular updates — so bumping
 should be obviously overdue when it is.
 
-A distribution is therefore versioned by the date it was released.
+A distribution is therefore versioned by the month it is released: `YY.MM.NN`,
+the year, the month, and which release of that month it is. `26.09.01` is
+September 2026's first release, `26.09.02` its second. The day says nothing a
+reader needs, so it is not there, and neither is the `20`.
+
+Until a release is stable it goes through stages, each counted from zero:
+
+```
+26.09.01-alpha.0   the first release of September 2026, first alpha
+26.09.01-alpha.1
+26.09.01-beta.0
+26.09.01           stable
+26.09.02-alpha.0   the month's second release
+26.10.01-alpha.0   October's first
+```
+
+A new month starts again at its first release, the count at zero, whatever was
+unfinished before — so a distribution still in alpha publishes `alpha.0`,
+`alpha.1`, … until the month turns. [`release`](/commands/release#in-a-distribution)
+works out what comes next, and the publish workflow refuses a release of a month
+that is over. A new distribution starts at the month's first release, in alpha.
 
 ## Semver for developers
 
@@ -51,7 +71,7 @@ shipped, written in as it is published and never committed:
 ```json
 {
   "name": "@fairgarden/core",
-  "version": "2026.9.26",
+  "version": "26.9.1-alpha.0",
   "distribution": {
     "modules": {
       "@fairgarden/id": {
@@ -71,8 +91,10 @@ clone — a fork's, with its `upstream` beside it — and the commit, which may 
 past the release the version names. It is the only place versions are written
 down.
 
-The date has no leading zeros — `2026.9.26`, not `2026.09.26` — because npm
-publishes only semver, and would drop them anyway.
+npm takes only semver, which allows no leading zeros, so the registry spells
+`26.09.01-alpha.0` as `26.9.1-alpha.0`: the same version, sorting the same way.
+The distribution's own manifest and its tag, `v26.09.01-alpha.0`, keep the zeros.
+An extension depending on it names npm's spelling, or a dist tag.
 
 ## Maintenance branches
 
@@ -83,16 +105,16 @@ every two, depending on how often you break things.
 
 ### Yearly
 
-`lts-2023` is created in 2023 and maintained until 2025, tagged `2023.01-lts`,
-`2023.02-lts` and so on. `lts-2024` is created in 2024 and maintained until
-2026, tagged `2024.01-lts` onwards.
+`lts-2023` is created in 2023 and maintained until 2025, tagged `23.01-lts`,
+`23.02-lts` and so on. `lts-2024` is created in 2024 and maintained until
+2026, tagged `24.01-lts` onwards.
 
 ### Quarterly
 
 `lts-2023-q2` is created in Q2 2023 and maintained until Q2 2024, tagged
-`2023.04.01-lts`, `2023.04.02-lts` and so on. `lts-2023-q4` runs Q4 2023 to Q4
-2024 with `2023.10.01-lts` onwards, and `lts-2024-q2` runs Q2 2024 to Q2 2025
-with `2024.04.01-lts` onwards.
+`23.04.01-lts`, `23.04.02-lts` and so on. `lts-2023-q4` runs Q4 2023 to Q4
+2024 with `23.10.01-lts` onwards, and `lts-2024-q2` runs Q2 2024 to Q2 2025
+with `24.04.01-lts` onwards.
 
 ### Modules do not get LTS
 
@@ -106,8 +128,8 @@ instead:
   1.1.x   the previous maintenance branch
 ```
 
-So `@fairgarden/core:2023.04.01` depends on `1.1.x` and
-`@fairgarden/core:2023.10.01` on `1.2.x`.
+So `@fairgarden/core:23.04.01` depends on `1.1.x` and
+`@fairgarden/core:23.10.01` on `1.2.x`.
 
 These are only needed when a distribution is using LTS. A module carried in an
 LTS distribution is one that is probably dependable enough to use on its own

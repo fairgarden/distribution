@@ -7,7 +7,7 @@ are git submodules; the distribution is what end users install and upgrade.
 
 ```
 acme/
-  package.json          the distribution manifest, versioned by date
+  package.json          the distribution manifest, versioned by month
   apps/
     monolith/           optional: one deployment serving every app
     widget/             a module with routes
@@ -25,8 +25,8 @@ and stays in the distribution.
 ```json
 {
   "name": "@acme/core",
-  "version": "2024.12.01",
-  "dependencies": { "@fairgarden/core": "2024.06.01" },
+  "version": "26.09.01",
+  "dependencies": { "@fairgarden/core": "26.6.1" },
   "distribution": { "extends": "@fairgarden/core" }
 }
 ```
@@ -37,7 +37,7 @@ what is absent: no module versions. See
 
 ## What each piece does
 
-- **[Versioning](/overview/versioning)** — dates for users, semver for
+- **[Versioning](/overview/versioning)** — months for users, semver for
   developers, and why the submodule is the only place a version is written.
 - **[Modules](/overview/modules)** — apps are mounted at a path, packages are
   depended on, and both are submodules resolved through the pnpm workspace.
@@ -47,6 +47,8 @@ what is absent: no module versions. See
   module's own, built once and run by every service.
 - **[Deploying](/overview/deploying)** — a simple distribution deploys as one
   Next app; a complex one deploys each app separately.
+- **[Changelogs](/overview/changelogs)** — every pull request adds its line, so
+  a release's notes are written before it goes out.
 - **[Forking a module](/overview/forking)** — fix one in your distribution,
   offer it upstream, and go back once upstream has it — or keep the fork.
 - **[Running it](/overview/running)** — `dev` serves the monolith,

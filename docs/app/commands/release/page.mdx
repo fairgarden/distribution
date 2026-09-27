@@ -9,11 +9,13 @@ Moves a module on from the release it has just published.
 Run it in a module, after the [publish workflow](/commands/workflows) has shipped
 the version main is sitting on.
 
-In a distribution it versions the distribution by today's date instead, for the
-workflow to publish: nothing branches, since a distribution has no lines of its
-own to maintain. Once a day at most — the date is the version. `--check`, which
-the workflow runs, also records what the distribution ships in the manifest it
-publishes.
+In a distribution it moves the distribution's version on instead — see
+[below](#in-a-distribution).
+
+Each branch it cuts opens its version's section in `CHANGELOG.md`, so the next
+pull request has somewhere to add its line. The version just published keeps
+its own, which the publish workflow has made its GitHub release's notes. See
+[Changelogs](/overview/changelogs).
 
 ## It will not choose for you
 
@@ -107,8 +109,9 @@ one shows what it is, which is the whole reason that block exists.
   the bumps are committed on top. Anything in the working tree would be swept in.
 - **Detached HEAD** — it has to know which branch to come back to, and which
   branch the pull request is against.
-- **A distribution** — a repository with submodules is versioned by date, not
-  semver. Release its modules individually, then [`bump`](/commands/bump).
+- **A distribution**, for `--patch`, `--minor` and `--major` — its version is its
+  month; see [below](#in-a-distribution). Its modules release on their own, and
+  [`bump`](/commands/bump) takes them.
 - **A branch that already exists** — `v1-6` is not moved onto an existing
   branch. Delete it, or you are releasing a version that has been released.
 
@@ -128,3 +131,32 @@ still pushed, and it says so rather than pretending.
 
 However it ends, you are left on the branch you started from, at the version
 main still carries — the bump is on a branch, waiting for review.
+
+## In a distribution
+
+```bash
+fg-dist release [--id <alpha|beta|rc>] [--stable] [--dry-run]
+```
+
+A distribution is versioned `YY.MM.NN` — see
+[Versioning](/overview/versioning#months-for-end-users) — and `release` sets the
+version the publish workflow releases next. Nothing branches: a distribution has
+no lines of its own to maintain.
+
+| The manifest says | | `release` moves it to |
+| --- | --- | --- |
+| `26.09.01-alpha.0`, published | | `26.09.01-alpha.1` |
+| `26.09.01-alpha.1`, published | `--id beta` | `26.09.01-beta.0` |
+| `26.09.01-beta.0`, published | `--stable` | `26.09.01` |
+| `26.09.01`, published | | `26.09.02` |
+| `26.09.01`, published | `--id alpha` | `26.09.02-alpha.0` |
+| `26.09.01-alpha.3`, published or not, in October | | `26.10.01-alpha.0` |
+| `26.09.01-alpha.1`, not published | | unchanged |
+
+Run it after the workflow publishes, to move on, and again when a month turns
+before the next release goes out. `CHANGELOG.md` follows: a new section when it
+moves on, the same one renamed when a release never published changes month. Published means tagged here — the workflow tags
+what it publishes — or on npm. Stages only move forward: `alpha`, `beta`, `rc`,
+then stable. `--check`, which the workflow runs, refuses a version of a month
+that is over, and records what the distribution ships in the manifest it
+publishes, spelled as npm spells it.

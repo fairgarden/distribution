@@ -538,7 +538,7 @@ test('a distribution is not somewhere to start a line', async () => {
 
   await assert.rejects(
     () => startPrerelease(root, { bump: 'major', push: false }),
-    /versioned by date/
+    /Its version is YY.MM.NN/
   )
 })
 
