@@ -54,10 +54,11 @@ const rootScripts = (monolith: boolean): Record<string, string> => {
     ? "--filter='./apps/*' --filter='!./apps/monolith'"
     : "--filter='./apps/*'"
   const docs = "--filter='./apps/*/docs' --filter='./packages/*/docs'"
+  // A build migrates what it deploys, once it has built: see `fg-dist migrate`.
   return {
-    build: monolith ? 'turbo run build --filter=./apps/monolith' : `turbo run build ${apps}`,
+    build: monolith ? 'turbo run build migrate --filter=./apps/monolith' : `turbo run build migrate ${apps}`,
     dev: monolith ? 'turbo run dev --filter=./apps/monolith' : `turbo run dev ${apps}`,
-    'modular:build': `turbo run build ${apps}`,
+    'modular:build': `turbo run build migrate ${apps}`,
     'modular:dev': `turbo run dev ${apps}`,
     'docs:build': `turbo run build ${docs}`,
     'docs:dev': `turbo run dev ${docs}`,
@@ -80,6 +81,14 @@ const turboJson = (monolith: string | undefined): string =>
     tasks: {
       build: { dependsOn: ['^build'], outputs: BUILD_OUTPUTS },
       ...(monolith ? { 'build:libs': { dependsOn: ['^build:libs', 'build'] } } : {}),
+      // After the build, and never from the cache: a cache hit would skip it
+      // for a database that has not seen it — a new preview's, say. Given the
+      // variables it decides by, which turbo otherwise keeps from it.
+      migrate: {
+        dependsOn: ['build'],
+        cache: false,
+        passThroughEnv: ['VERCEL', 'VERCEL_ENV', 'FG_*', 'DATABASE_URL*', 'POSTGRES_URL*'],
+      },
       lint: { dependsOn: ['^lint'] },
       // A fresh checkout has built none of the libraries an app's config loads.
       dev: { dependsOn: ['^build'], persistent: true, cache: false },
@@ -208,6 +217,8 @@ export const monolithRepo = (
       // Each takes a copy of the organization's policy to run, when there is one.
       dev: 'fg-dist policy use && next dev -p 3000',
       build: 'fg-dist policy use && next build',
+      // Every app it mounts that has a database, each into its own.
+      migrate: 'fg-dist migrate --build',
       start: 'next start -p 3000',
       lint: 'eslint',
     },

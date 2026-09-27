@@ -219,7 +219,7 @@ test('a monolith repo runs the monolith, or each app on its own, and never the d
     const root = await scaffold(files)
     const { scripts } = readJson(root, 'package.json')
     assert.equal(scripts.dev, 'turbo run dev --filter=./apps/monolith')
-    assert.equal(scripts.build, 'turbo run build --filter=./apps/monolith')
+    assert.equal(scripts.build, 'turbo run build migrate --filter=./apps/monolith')
     for (const name of ['modular:dev', 'modular:build']) {
       assert.match(scripts[name], /--filter='\.\/apps\/\*' --filter='!\.\/apps\/monolith'/)
     }
@@ -257,12 +257,23 @@ test('every command is `pnpm dist <command>`, and a distribution has what its ch
   assert.doesNotMatch(readFileSync(path.join(root, 'Readme.md'), 'utf8'), /date-based/)
 })
 
+test('a build migrates what it deploys, after building it and never from the cache', async () => {
+  const root = await scaffold(distributionRepo('@acme/core'))
+  const { migrate } = readJson(root, 'turbo.json').tasks
+  assert.deepEqual(migrate.dependsOn, ['build'])
+  assert.equal(migrate.cache, false)
+  // turbo keeps every variable from a task it is not told to pass through
+  for (const name of ['VERCEL_ENV', 'FG_*', 'DATABASE_URL*']) assert.ok(migrate.passThroughEnv.includes(name), name)
+  assert.equal(readJson(root, 'apps/monolith/package.json').scripts.migrate, 'fg-dist migrate --build')
+  assert.match(readJson(root, 'package.json').scripts['modular:build'], /^turbo run build migrate /)
+})
+
 test('a separate distribution runs every app, with no monolith to build for', async () => {
   const root = await scaffold(distributionRepo('@acme/core', undefined, undefined, { monolith: false }))
   const { scripts } = readJson(root, 'package.json')
   assert.equal(scripts.dev, "turbo run dev --filter='./apps/*'")
   assert.equal(scripts['modular:dev'], scripts.dev)
-  assert.equal(scripts.build, "turbo run build --filter='./apps/*'")
+  assert.equal(scripts.build, "turbo run build migrate --filter='./apps/*'")
   assert.equal(readJson(root, 'turbo.json').tasks['build:libs'], undefined)
   for (const dir of ['apps', 'packages']) {
     assert.equal(readFileSync(path.join(root, dir, '.gitkeep'), 'utf8'), '')

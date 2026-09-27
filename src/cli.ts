@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
 import { verify } from './verify.ts'
+import { inBuild, loadEnvFiles, migrationTargets, runMigrations, type MigrateAction } from './migrate.ts'
 import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
@@ -82,6 +84,7 @@ Commands:
   prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
   verify               Fail when a file fg-dist writes no longer says what is true (CI)
+  migrate [name...]    Migrate the databases of this app, or of every app this monolith ships
   inherit              Add the modules the distribution this extends ships, and this does not
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version; a fork merges it
@@ -122,11 +125,15 @@ Options:
   --force              Overwrite workflows that are already there (workflows)
   --distribution       Publish the distribution itself, for others to extend (workflows)
   --no-push            Push nothing and open no pull request (next-version, fork, contribute, bump)
-  --to <ref>           Upstream tag, branch or commit to go back to (unfork)
+  --to <ref>           Upstream tag, branch or commit to go back to (unfork); roll back all after it (migrate)
   --base <branch>      Branch the pull request goes into (contribute); what it merges into (changelog check)
   --pr <number>        The pull request to check, outside GitHub Actions (changelog check)
   --repo <owner/name>  The repository its link names, outside GitHub Actions (changelog check)
   --out <file>         Where policy build writes the bundle (default: policies/dist/)
+  --build              As a build step: only where builds migrate, see the docs (migrate)
+  --status             What has run and what is pending, changing nothing (migrate)
+  --rollback           Roll back the latest migration, --steps N of them, or all after --to TAG (migrate)
+  --steps <n>          How many to roll back (migrate --rollback)
 `
 
 interface Args {
@@ -159,6 +166,10 @@ interface Args {
   repo: string | undefined
   direct: boolean
   copyright: string | undefined
+  build: boolean
+  status: boolean
+  rollback: boolean
+  steps: number | undefined
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -192,6 +203,10 @@ const parseArgs = (argv: string[]): Args => {
     repo: undefined,
     direct: false,
     copyright: undefined,
+    build: false,
+    status: false,
+    rollback: false,
+    steps: undefined,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -200,6 +215,14 @@ const parseArgs = (argv: string[]): Args => {
       args.cwd = path.resolve(argv[++index] ?? '.')
     } else if (arg === '--check') {
       args.check = true
+    } else if (arg === '--build') {
+      args.build = true
+    } else if (arg === '--status') {
+      args.status = true
+    } else if (arg === '--rollback') {
+      args.rollback = true
+    } else if (arg === '--steps') {
+      args.steps = Number(argv[++index])
     } else if (arg === '--major') {
       args.major = true
       args.bump = 'major'
@@ -1029,6 +1052,80 @@ const main = async (): Promise<number> => {
       `${report.distribution.name}@${report.distribution.version} ships nothing older ` +
         `than ${report.parent?.name}@${report.parent?.version}.\n`
     )
+    return 0
+  }
+
+  if (args.command === 'migrate') {
+    // Where the build runs, not the repository: a monolith is one package of many.
+    const root = args.cwd
+    if (!existsSync(path.join(root, 'package.json'))) {
+      throw new Error(`${root} has no package.json: run this where an app or a monolith is built.`)
+    }
+    if (args.status && args.rollback) throw new Error('--status or --rollback, not both.')
+    if (args.steps !== undefined && !(Number.isInteger(args.steps) && args.steps > 0)) {
+      throw new Error('--steps is a whole number of migrations.')
+    }
+
+    // A build's environment, as Next's build reads it; by hand, the one being worked in.
+    loadEnvFiles(root, args.build ? 'production' : (process.env.NODE_ENV ?? 'development'))
+
+    if (args.build) {
+      const decision = inBuild(process.env)
+      if (!decision.migrate) {
+        process.stdout.write(`Not migrating: ${decision.reason}.\n`)
+        return 0
+      }
+      process.stdout.write(`Migrating: ${decision.reason}.\n`)
+    }
+
+    let targets = migrationTargets(root)
+    if (args.names.length > 0) {
+      const unknown = args.names.filter((name) => !targets.some((target) => target.name === name))
+      if (unknown.length > 0) {
+        throw new Error(
+          `Nothing here migrates ${unknown.join(', ')}. ` +
+            (targets.length > 0 ? `What does: ${targets.map((target) => target.name).join(', ')}.` : '')
+        )
+      }
+      targets = targets.filter((target) => args.names.includes(target.name))
+    }
+    if (targets.length === 0) {
+      process.stdout.write('Nothing here declares migrations.\n')
+      return 0
+    }
+    // Rolling back is one app's business: which one should not be a guess.
+    if (args.rollback && targets.length > 1) {
+      throw new Error(
+        `Name the app to roll back: ${targets.map((target) => target.name).join(', ')}.`
+      )
+    }
+
+    const action: MigrateAction = args.status
+      ? { kind: 'status' }
+      : args.rollback
+        ? { kind: 'rollback', steps: args.steps, to: args.to }
+        : { kind: 'migrate' }
+
+    const results = await runMigrations(targets, { action, build: args.build })
+    const width = pad(results.map((result) => result.target.name))
+    for (const { target, database, changed, status: rows, skipped } of results) {
+      const name = target.name.padEnd(width)
+      const where = database ? `  (${database.variable})` : ''
+      if (skipped) {
+        process.stdout.write(`${name}  skipped: ${skipped}\n`)
+      } else if (rows) {
+        process.stdout.write(`${name}${where}\n`)
+        for (const row of rows) {
+          const when = row.appliedAt ? row.appliedAt.toISOString() : ''
+          const down = row.reversible ? '' : ' (no down migration)'
+          process.stdout.write(`  ${row.state.padEnd(8)} ${row.tag}${down} ${when}`.trimEnd() + '\n')
+        }
+      } else if (action.kind === 'rollback') {
+        process.stdout.write(`${name}  ${changed.length ? `rolled back ${changed.join(', ')}` : 'nothing to roll back'}${where}\n`)
+      } else {
+        process.stdout.write(`${name}  ${changed.length ? `applied ${changed.join(', ')}` : 'up to date'}${where}\n`)
+      }
+    }
     return 0
   }
 
