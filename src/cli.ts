@@ -110,6 +110,7 @@ Options:
   --no-git             Skip "git init" when scaffolding
   --url <git-url>      Remote the scaffolded repository will live at (init)
   --extends <name>     Distribution the scaffolded one extends (init distribution)
+  --copyright <holder> Who holds the copyright on its MIT license (init; default: git user.name)
   --separate           Scaffold a distribution whose apps deploy separately
   --ssh                Record a submodule's URL as given, without rewriting it
   --no-verify          Skip checking whether the https urls can be cloned
@@ -153,6 +154,7 @@ interface Args {
   pr: number | undefined
   repo: string | undefined
   direct: boolean
+  copyright: string | undefined
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -185,6 +187,7 @@ const parseArgs = (argv: string[]): Args => {
     pr: undefined,
     repo: undefined,
     direct: false,
+    copyright: undefined,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -228,6 +231,8 @@ const parseArgs = (argv: string[]): Args => {
       args.force = true
     } else if (arg === '--no-push') {
       args.push = false
+    } else if (arg === '--copyright') {
+      args.copyright = argv[++index]
     } else if (arg === '--direct') {
       args.direct = true
     } else if (arg === '--next') {
@@ -380,12 +385,22 @@ const main = async (): Promise<number> => {
     // A module is consumed as a submodule, so record the URL it will be
     // cloned from in the form a keyless clone can use.
     const origin = args.url ? (args.ssh ? args.url : toHttps(args.url)) : undefined
+    // Who holds the copyright on the MIT license it starts under: as given, or
+    // whoever git says is making it.
+    let copyright = args.copyright
+    if (!copyright) {
+      try {
+        copyright = execFileSync('git', ['config', 'user.name'], { encoding: 'utf8' }).trim() || undefined
+      } catch {
+        copyright = undefined
+      }
+    }
     const files =
       kind === 'distribution'
-        ? distributionRepo(name, origin, args.extends, { monolith: !args.separate })
+        ? distributionRepo(name, origin, args.extends, { monolith: !args.separate, copyright })
         : kind === 'monolith'
-          ? monolithRepo(name, origin)
-          : moduleRepo(name, origin)
+          ? monolithRepo(name, origin, { copyright })
+          : moduleRepo(name, origin, { copyright })
     const written = await write(target, files)
 
     if (args.git) {
@@ -1276,6 +1291,15 @@ const main = async (): Promise<number> => {
       process.stderr.write(
         `${module.path} has something in it already, so ${module.name} was not added there.\n`
       )
+    }
+    // The parent's notice goes with what is built on it.
+    const license = result.license
+    if (license.how === 'merged') {
+      process.stdout.write(`LICENSE carries ${result.parent}'s copyright too: ${license.lines.join('; ')}\n`)
+    } else if (license.how === 'copied') {
+      process.stdout.write(`${license.file} keeps ${result.parent}'s license, which is not this one's.\n`)
+    } else if (license.how === 'none') {
+      process.stdout.write(`${result.parent} publishes no license to carry.\n`)
     }
     if (result.added.length === 0 && result.blocked.length === 0) {
       process.stdout.write(`Ships everything ${result.parent}@${result.parentVersion} ships already.\n`)

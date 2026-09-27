@@ -258,3 +258,19 @@ test('a module runs at a stable hostname on its own', async () => {
   assert.equal(pkg.scripts.dev, 'portless widget next dev')
   assert.ok(pkg.devDependencies.portless)
 })
+
+test('everything scaffolded starts under the MIT license, with its holder', async () => {
+  for (const [files, manifests] of [
+    [moduleRepo('@acme/widget', undefined, { copyright: 'Acme Inc' }), ['package.json']],
+    [monolithRepo('@acme/core', undefined, { copyright: 'Acme Inc' }), ['package.json', 'apps/monolith/package.json']],
+    [distributionRepo('@acme/core', undefined, undefined, { copyright: 'Acme Inc' }), ['package.json', 'policies/package.json']],
+    [distributionRepo('@acme/core', undefined, undefined, { monolith: false, copyright: 'Acme Inc' }), ['package.json']],
+  ]) {
+    const root = await scaffold(files)
+    const license = readFileSync(path.join(root, 'LICENSE'), 'utf8')
+    assert.match(license, /^MIT License\n\nCopyright \(c\) \d{4} Acme Inc\n\nPermission is hereby granted/)
+    for (const manifest of manifests) assert.equal(readJson(root, manifest).license, 'MIT', manifest)
+  }
+  // Nobody named: the project's authors.
+  assert.match(moduleRepo('@acme/widget').LICENSE, /Copyright \(c\) \d{4} The @acme\/widget authors/)
+})

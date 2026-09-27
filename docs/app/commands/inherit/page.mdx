@@ -35,4 +35,22 @@ again whenever the parent starts shipping something new — `check` says when.
 The parent has to be installed, and published with a version of `fg-dist` that
 records where its modules live.
 
+## Its license
+
+An extension ships what its parent ships and builds on its policy, so the
+parent's notice goes with it, as its license asks. When both are MIT, the
+parent's copyright lines are added to the extension's `LICENSE`, above its own —
+the parent's already carry whatever it extends:
+
+```
+MIT License
+
+Copyright (c) 2026 Fair Garden
+Copyright (c) 2026 Acme
+```
+
+Under another license, the parent's is kept whole beside the extension's, as
+`LICENSE.fairgarden-core`. Each module keeps its own license in its own
+repository, untouched.
+
 Each module added is noted in the distribution's [changelog](/overview/changelogs).

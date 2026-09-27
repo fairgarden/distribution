@@ -1,7 +1,7 @@
 # `init`
 
 ```bash
-fg-dist init <kind> [dir] [--name <name>] [--url <git-url>] [--extends <name>] [--separate]
+fg-dist init <kind> [dir] [--name <name>] [--url <git-url>] [--extends <name>] [--separate] [--copyright <holder>]
 ```
 
 Scaffolds a repository. `kind` is `distribution`, `monolith` or `module`.
@@ -37,7 +37,12 @@ name.
 | `--url <git-url>` | where the repository will live; becomes `origin` and `repository` |
 | `--extends <name>` | distribution this one extends; then `pnpm install` and [`inherit`](/commands/inherit) to ship its modules |
 | `--separate` | a distribution with no monolith, whose apps deploy separately |
+| `--copyright <holder>` | who holds the copyright on its MIT license; default, the git user |
 | `--no-git` | skip `git init` |
+
+Every kind starts under the MIT license: a `LICENSE` naming the holder and the
+year, and `"license": "MIT"` in each `package.json`. An extension also carries
+its parent's notice, once [`inherit`](/commands/inherit) can read it.
 
 `--url` matters most for a module, since that is the url a distribution will add
 it as a submodule by. Without it you are told the repository has no remote. An

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { addModule } from './add-module.ts'
@@ -30,9 +30,66 @@ export interface InheritedModule extends PublishedModule {
   name: string
 }
 
+/** What became of the parent's license. */
+export type CarriedLicense =
+  /** Its copyright lines, added to this distribution's MIT license. */
+  | { how: 'merged'; lines: string[] }
+  /** Its license, kept verbatim beside this one's, which it is not. */
+  | { how: 'copied'; file: string }
+  /** Carried already, from an earlier run. */
+  | { how: 'already' }
+  /** It publishes none. */
+  | { how: 'none' }
+
+const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md']
+
+const findLicense = (dir: string): string | undefined =>
+  LICENSE_FILES.map((name) => path.join(dir, name)).find((file) => existsSync(file))
+
+const copyrightLines = (text: string): string[] =>
+  text.split('\n').filter((line) => /^\s*copyright\b/i.test(line)).map((line) => line.trim())
+
+const isMit = (text: string): boolean => /^\s*(the\s+)?mit\s+licen[cs]e/i.test(text)
+
+/**
+ * Carry the parent's license into this distribution's, as it asks.
+ *
+ * An extension ships what its parent does and builds on its policy, so the
+ * parent's notice goes with it. Both MIT, the parent's copyright lines join
+ * this one's — the parent's own already carry whatever it extends. Otherwise
+ * the parent's license is kept whole beside this one's.
+ */
+export const carryParentLicense = (root: string, parent: string, parentRoot: string): CarriedLicense => {
+  const theirs = findLicense(parentRoot)
+  if (!theirs) return { how: 'none' }
+  const theirText = readFileSync(theirs, 'utf8')
+  const ours = findLicense(root)
+  const ourText = ours ? readFileSync(ours, 'utf8') : undefined
+
+  if (ours && ourText && isMit(ourText) && isMit(theirText)) {
+    const have = new Set(copyrightLines(ourText))
+    const missing = copyrightLines(theirText).filter((line) => !have.has(line))
+    if (missing.length === 0) return { how: 'already' }
+    const lines = ourText.split('\n')
+    const first = lines.findIndex((line) => /^\s*copyright\b/i.test(line))
+    const at = first === -1 ? Math.min(2, lines.length) : first
+    lines.splice(at, 0, ...missing)
+    writeFileSync(ours, lines.join('\n'))
+    return { how: 'merged', lines: missing }
+  }
+
+  const file = `LICENSE.${parent.replace(/^@/, '').replace(/[^A-Za-z0-9._-]+/g, '-')}`
+  const target = path.join(root, file)
+  if (existsSync(target) && readFileSync(target, 'utf8') === theirText) return { how: 'already' }
+  writeFileSync(target, theirText)
+  return { how: 'copied', file }
+}
+
 export interface Inheritance {
   parent: string
   parentVersion: string
+  /** What became of the parent's license. */
+  license: CarriedLicense
   /** Added, or with a dry run, what would be. */
   added: InheritedModule[]
   /** Shipped already, at whatever version: `check` and `bump` see to that. */
@@ -49,9 +106,11 @@ export const inherit = async (
   if (!own.extends) throw new Error(`${own.name} extends nothing, so there is nothing to inherit.`)
 
   let manifest: { version?: string; distribution?: { modules?: unknown } }
+  let parentRoot: string
   try {
     const file = createRequire(path.join(root, 'package.json')).resolve(`${own.extends}/package.json`)
     manifest = JSON.parse(readFileSync(file, 'utf8'))
+    parentRoot = path.dirname(file)
   } catch {
     throw new Error(`${own.extends} is not installed, so there is nothing to read. Run pnpm install first.`)
   }
@@ -67,6 +126,7 @@ export const inherit = async (
   const inheritance: Inheritance = {
     parent: own.extends,
     parentVersion: manifest.version ?? '',
+    license: dryRun ? { how: 'already' } : carryParentLicense(root, own.extends, parentRoot),
     added: [],
     shipped: [],
     blocked: [],

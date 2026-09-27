@@ -9,6 +9,8 @@ import { inspectExtends } from '../dist/extends.js'
 import { forkModule, integrate } from '../dist/forks.js'
 import { inherit } from '../dist/inherit.js'
 import { stampModules } from '../dist/manifest.js'
+import { mitLicense } from '../dist/scaffold.js'
+import { carryParentLicense } from '../dist/inherit.js'
 import { firstRelease, npmVersion } from '../dist/calver.js'
 import { checkReleasable, releaseDistribution } from '../dist/release.js'
 import { inspect, submodules } from '../dist/submodules.js'
@@ -99,7 +101,10 @@ const setup = () => {
   /** What `npm publish` then `pnpm install` would put in the child. */
   const publish = async () => {
     await stampModules(parent)
-    write(child, { 'node_modules/@fair/core/package.json': readFileSync(path.join(parent, 'package.json'), 'utf8') })
+    write(child, {
+      'node_modules/@fair/core/package.json': readFileSync(path.join(parent, 'package.json'), 'utf8'),
+      'node_modules/@fair/core/LICENSE': mitLicense('Fair Garden', 2025),
+    })
     git(parent, ['checkout', '-q', 'package.json'])
   }
 
@@ -127,9 +132,13 @@ test('a published distribution records every module: version, place, repository,
 test('an extension inherits what its parent ships, forks included, and passes the floor', async () => {
   const { child, publish, kit, kitFork, parent } = setup()
   await publish()
+  write(child, { LICENSE: mitLicense('Acme', 2026) })
 
   assert.equal(inspectExtends(child).violations.length, 2)
   const result = await inherit(child)
+  // The parent's notice goes with what is built on it, above this one's.
+  assert.deepEqual(result.license, { how: 'merged', lines: ['Copyright (c) 2025 Fair Garden'] })
+  assert.match(readFileSync(path.join(child, 'LICENSE'), 'utf8'), /Copyright \(c\) 2025 Fair Garden\nCopyright \(c\) 2026 Acme\n/)
   assert.deepEqual(result.added.map((module) => module.path).sort(), ['apps/widget', 'packages/kit'])
 
   const shipped = submodules(child)
@@ -146,6 +155,7 @@ test('an extension inherits what its parent ships, forks included, and passes th
   assert.match(log, /- `@fair\/widget` 1\.0\.0 added, as @fair\/core ships it, from /)
   assert.match(log, /- `@fair\/kit` 1\.0\.0 added, as @fair\/core ships it, from .*kit-fork\.git, a fork of .*kit\.git/)
   const again = await inherit(child)
+  assert.deepEqual(again.license, { how: 'already' })
   assert.deepEqual(again.added, [])
   assert.deepEqual(again.shipped.sort(), ['@fair/kit', '@fair/widget'])
 })
@@ -253,4 +263,17 @@ test("a distribution's own workflow publishes it with its submodules and its pol
   assert.equal(manifest.scripts['release:check'], 'fg-dist release --check')
 
   assert.equal((await writeDistributionWorkflow(parent)).skipped, true)
+})
+
+test("an extension under another license keeps its parent's beside its own", () => {
+  const base = mkdtempSync(path.join(tmpdir(), 'licenses-'))
+  const parent = path.join(base, 'parent')
+  const child = path.join(base, 'child')
+  write(parent, { LICENSE: mitLicense('Fair Garden', 2025) })
+  write(child, { LICENSE: 'Acme Proprietary License\n\nAll rights reserved.\n' })
+
+  assert.deepEqual(carryParentLicense(child, '@fair/core', parent), { how: 'copied', file: 'LICENSE.fair-core' })
+  assert.equal(readFileSync(path.join(child, 'LICENSE.fair-core'), 'utf8'), mitLicense('Fair Garden', 2025))
+  assert.match(readFileSync(path.join(child, 'LICENSE'), 'utf8'), /^Acme Proprietary/)
+  assert.deepEqual(carryParentLicense(child, '@fair/core', parent), { how: 'already' })
 })

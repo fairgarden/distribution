@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.0",
   "private": true,
   "description": "Documentation site for @fairgarden/distribution",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev -p 3031",
     "build": "next build",

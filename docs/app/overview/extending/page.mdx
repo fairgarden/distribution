@@ -26,7 +26,9 @@ fg-dist inherit
 
 [`inherit`](/commands/inherit) adds every module the parent ships, where the
 parent has it, at the commit the parent pins — so an extension starts out
-shipping exactly its parent. From there it adds its own with
+shipping exactly its parent. It carries the parent's license notice too: its
+copyright joins the extension's own, or, under a different license, the
+parent's is kept beside it. From there it adds its own with
 [`add-module`](/commands/add-module), moves ahead with [`bump`](/commands/bump),
 and changes what it inherited by [forking it](/overview/forking). When the
 parent starts shipping something new, `check` fails until `inherit` adds it.

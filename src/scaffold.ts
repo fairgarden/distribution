@@ -92,6 +92,40 @@ const turboJson = (monolith: string | undefined): string =>
     },
   })
 
+/**
+ * The MIT license, which every repository this scaffolds starts under. Who
+ * holds the copyright is asked for — \`--copyright\`, or the git user — since
+ * nothing here can know it.
+ */
+export const mitLicense = (holder: string, year = new Date().getUTCFullYear()): string =>
+  `MIT License
+
+Copyright (c) ${year} ${holder}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`
+
+export interface LicenseOptions {
+  /** Who holds the copyright. Defaults to "The <name> authors". */
+  copyright?: string
+}
+
 const GITIGNORE = `node_modules
 .next
 .turbo
@@ -140,7 +174,12 @@ const TSCONFIG = {
  * The monolith app lives at `apps/monolith` so modules can be added beside it
  * as `apps/<name>`, which is where `add-module` puts them.
  */
-export const monolithRepo = (name: string, origin?: string): Files => ({
+export const monolithRepo = (
+  name: string,
+  origin?: string,
+  { copyright = `The ${name} authors` }: LicenseOptions = {}
+): Files => ({
+  LICENSE: mitLicense(copyright),
   '.gitignore': `node_modules\n.turbo\n`,
   // Modules are linked through the workspace, so nothing here carries a
   // version: the submodule commit is the pin and its package.json is the
@@ -153,6 +192,7 @@ export const monolithRepo = (name: string, origin?: string): Files => ({
   'package.json': json({
     name,
     version: '0.1.0-alpha.0',
+    license: 'MIT',
     private: true,
     ...(origin ? { repository: { type: 'git', url: origin } } : {}),
     scripts: rootScripts(true),
@@ -162,6 +202,7 @@ export const monolithRepo = (name: string, origin?: string): Files => ({
   'apps/monolith/package.json': json({
     name: `${name}-monolith`,
     version: '0.1.0-alpha.0',
+    license: 'MIT',
     private: true,
     scripts: {
       // Each takes a copy of the organization's policy to run, when there is one.
@@ -232,7 +273,12 @@ export default config
 const unscoped = (packageName: string): string =>
   packageName.replace(/^@[^/]+\//, '')
 
-export const moduleRepo = (packageName: string, origin?: string): Files => ({
+export const moduleRepo = (
+  packageName: string,
+  origin?: string,
+  { copyright = `The ${packageName} authors` }: LicenseOptions = {}
+): Files => ({
+  LICENSE: mitLicense(copyright),
   // A module releases on its own schedule, so it carries its own workflow, and
   // its own changelog, which every pull request adds to.
   ...publishWorkflow(packageName),
@@ -242,6 +288,7 @@ export const moduleRepo = (packageName: string, origin?: string): Files => ({
   'package.json': json({
     name: packageName,
     version: '0.1.0-alpha.0',
+    license: 'MIT',
     // Not private: a module publishes itself, so that a monolith which cannot
     // reach it as a submodule can install it as a package instead. Scoped
     // packages publish restricted by default; say so rather than leave it to
@@ -388,6 +435,7 @@ const policiesFiles = (name: string, origin?: string): Files => ({
   }),
   'policies/package.json': json({
     name: `${name}-policies`,
+    license: 'MIT',
     private: true,
     type: 'module',
     scripts: { build: 'fg-dist policy build', test: 'fg-dist policy test' },
@@ -430,14 +478,15 @@ export const distributionRepo = (
   name: string,
   origin?: string,
   parent?: string,
-  { monolith = true }: { monolith?: boolean } = {}
+  { monolith = true, copyright = `The ${name} authors` }: { monolith?: boolean } & LicenseOptions = {}
 ): Files => {
   // A distribution of only Next apps can deploy as one. A complex one cannot,
   // and then each app under apps/ is deployed on its own — which is fine for
   // an audience that already has deployment infrastructure.
   const files = monolith
-    ? monolithRepo(name, origin)
+    ? monolithRepo(name, origin, { copyright })
     : {
+        LICENSE: mitLicense(copyright),
         '.gitignore': `node_modules\n.turbo\n`,
         '.npmrc': `link-workspace-packages=true\nsave-workspace-protocol=true\n`,
         'pnpm-workspace.yaml': WORKSPACE,
@@ -466,6 +515,7 @@ export const distributionRepo = (
     // End users read the month, not a semver range: it says how old their copy
     // is. It starts as this month's first release, in alpha — see calver.ts.
     version,
+    license: 'MIT',
     private: true,
     ...(origin ? { repository: { type: 'git', url: origin } } : {}),
     ...(parent ? { distribution: { extends: parent } } : {}),
