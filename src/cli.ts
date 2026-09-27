@@ -5,7 +5,8 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
-import { writeDistributionChangelogCheck, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
+import { verify } from './verify.ts'
+import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
   checkReleasable,
@@ -64,6 +65,7 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 const USAGE = `Usage: fg-dist <command> [options]
+       pnpm dist <command> [options], in a repository fg-dist set up
 
 Commands:
   init <kind> [dir]    Scaffold a repository; kind is "distribution", "monolith" or "module"
@@ -78,6 +80,7 @@ Commands:
   release              Move a module on from the release it just published
   prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
+  verify               Fail when a file fg-dist writes no longer says what is true (CI)
   inherit              Add the modules the distribution this extends ships, and this does not
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version; a fork merges it
@@ -354,6 +357,29 @@ const modulesFor = (cwd: string, names: string[]) => {
   return { root, modules }
 }
 
+/**
+ * Bring a distribution's readme up to what a command just changed.
+ *
+ * Its table names every module's version and pin, so a command that moves one
+ * leaves it stale — and \`verify\` fails the pull request that forgot. Only the
+ * distribution's own: a module's readme is the module's, and writing into one
+ * would leave its submodule dirty.
+ */
+const refreshReadme = async (root: string): Promise<void> => {
+  if (!isDistribution(root)) return
+  try {
+    const { updates } = await writeReadmes(root, { modules: false })
+    for (const update of updates.filter((each) => each.changed)) {
+      process.stdout.write(`${path.relative(root, update.file)} lists what it ships now.\n`)
+    }
+  } catch (error) {
+    process.stderr.write(
+      `The readme was not updated: ${error instanceof Error ? error.message : String(error)}\n` +
+        'Run `pnpm dist readme` once that is sorted.\n'
+    )
+  }
+}
+
 const pad = (values: string[]): number =>
   values.reduce((widest, value) => Math.max(widest, value.length), 0)
 
@@ -437,8 +463,8 @@ const main = async (): Promise<number> => {
       kind === 'module'
         ? 'Next: pnpm install, then commit and push so a distribution can add it.\n'
         : args.extends && kind === 'distribution'
-          ? `Next: pnpm install, then \`fg-dist inherit\` to ship what ${args.extends} ships.\n`
-          : 'Next: pnpm install, then `fg-dist add-module <url>` to ship a module.\n'
+          ? `Next: pnpm install, then \`pnpm dist inherit\` to ship what ${args.extends} ships.\n`
+          : 'Next: pnpm install, then `pnpm dist add-module <url>` to ship a module.\n'
     )
     return 0
   }
@@ -489,7 +515,7 @@ const main = async (): Promise<number> => {
       process.stderr.write(
         `\nThe module is added, but the workspace overrides were not updated:\n` +
           `  ${result.overridesError}\n` +
-          'Run `fg-dist overrides` once that is sorted.\n'
+          'Run `pnpm dist overrides` once that is sorted.\n'
       )
     }
 
@@ -523,6 +549,8 @@ const main = async (): Promise<number> => {
         "turbo.json: the monolith's build waits for its libraries, not its own build\n"
       )
     }
+    const root = repositoryRoot(args.cwd)
+    if (root) await refreshReadme(root)
 
     process.stdout.write(
       result.monolithPackageJson
@@ -559,7 +587,7 @@ const main = async (): Promise<number> => {
       process.stderr.write(
         `\n${changed.length} readme(s) are out of date:\n${changed
           .map((update) => `  ${path.relative(root, update.file)}`)
-          .join('\n')}\nRun \`fg-dist readme\` to update them.\n`
+          .join('\n')}\nRun \`pnpm dist readme\` to update them.\n`
       )
       return 1
     }
@@ -594,7 +622,7 @@ const main = async (): Promise<number> => {
       }
       process.stdout.write(
         '\nIt publishes the manifest, recording every module it ships, and its policy. ' +
-          'Version it with `fg-dist release`, then run the workflow.\n'
+          'Version it with `pnpm release`, then run the workflow.\n'
       )
       return 0
     }
@@ -604,10 +632,10 @@ const main = async (): Promise<number> => {
       dryRun: args.dryRun,
       names: args.names,
     })
-    // The distribution checks its own changelog too, for policy changes —
-    // unless only some modules were named.
+    // The distribution has its own checks too — the changelog for policy
+    // changes, and what fg-dist writes — unless only some modules were named.
     if (isDistribution(root) && args.names.length === 0) {
-      updates.push(await writeDistributionChangelogCheck(root, { force: args.force, dryRun: args.dryRun }))
+      updates.push(await writeDistributionChecks(root, { force: args.force, dryRun: args.dryRun }))
     }
 
     if (updates.length === 0) {
@@ -623,6 +651,17 @@ const main = async (): Promise<number> => {
         update.skipped
           ? `${update.relativePath}  has one already\n`
           : `${update.relativePath}  ${update.files.join(', ')}\n`
+      )
+    }
+
+    // A module's CI installs fg-dist from npm, so what these workflows run has
+    // to be in a release it can install.
+    const tool = await toolRelease()
+    if (tool && tool.floor !== tool.own) {
+      process.stderr.write(
+        `\nfg-dist ${tool.own} is not released, so modules are given ^${tool.floor}, the newest that is.\n` +
+          `Whatever these workflows run that is new since then fails in the modules' CI until\n` +
+          `${tool.own} is published. Publish it, then run this again to move them up to it.\n`
       )
     }
 
@@ -714,7 +753,7 @@ const main = async (): Promise<number> => {
     if (args.check) {
       process.stderr.write(
         `\n${path.relative(root, file)} does not match the modules here.\n` +
-          'Run `fg-dist overrides` to update it.\n'
+          'Run `pnpm dist overrides` to update it.\n'
       )
       return 1
     }
@@ -805,7 +844,7 @@ const main = async (): Promise<number> => {
           )
         }
         process.stdout.write(
-          `\nOr \`fg-dist prerelease --major\` to start the next line beside main, ` +
+          `\nOr \`pnpm dist prerelease --major\` to start the next line beside main, ` +
             'without\nmoving main off this one.\n'
         )
         return 1
@@ -939,7 +978,7 @@ const main = async (): Promise<number> => {
         return 0
       }
       process.stdout.write(
-        `${args.check ? 'turbo.json is missing' : 'Wrote'} ${differ.join(', ')}${args.check ? '; run fg-dist policy setup.' : ' into turbo.json.'}\n`
+        `${args.check ? 'turbo.json is missing' : 'Wrote'} ${differ.join(', ')}${args.check ? '; run pnpm dist policy setup.' : ' into turbo.json.'}\n`
       )
       return args.check ? 1 : 0
     }
@@ -980,6 +1019,26 @@ const main = async (): Promise<number> => {
     return 0
   }
 
+  if (args.command === 'verify') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+
+    const checks = await verify(root)
+    const width = pad(checks.map((check) => check.what))
+    for (const check of checks) {
+      if (check.ok) {
+        process.stdout.write(`ok     ${check.what}\n`)
+        continue
+      }
+      const problem = (check.problem ?? '').split('\n').join(`\n       ${' '.repeat(width)}  `)
+      process.stderr.write(
+        `stale  ${check.what.padEnd(width)}  ${problem}\n` +
+          (check.fix ? `       ${' '.repeat(width)}  Run \`${check.fix}\`.\n` : '')
+      )
+    }
+    return checks.every((check) => check.ok) ? 0 : 1
+  }
+
   if (args.command === 'extract') {
     const [target] = args.names
     if (!target) {
@@ -1017,9 +1076,11 @@ const main = async (): Promise<number> => {
       process.stderr.write(
         `\nThe module is extracted, but the workspace overrides were not updated:\n` +
           `  ${result.overridesError}\n` +
-          'Run `fg-dist overrides` once that is sorted.\n'
+          'Run `pnpm dist overrides` once that is sorted.\n'
       )
     }
+    const root = repositoryRoot(args.cwd)
+    if (root) await refreshReadme(root)
     process.stdout.write(`origin is ${result.url}\n`)
     if (result.rewritten) {
       process.stdout.write(
@@ -1114,7 +1175,7 @@ const main = async (): Promise<number> => {
         )
       }
       process.stdout.write(
-        'Run `fg-dist use-https` to rewrite them. They also have to be ' +
+        'Run `pnpm dist use-https` to rewrite them. They also have to be ' +
           'readable without credentials, which means public.\n'
       )
     }
@@ -1130,7 +1191,7 @@ const main = async (): Promise<number> => {
         process.stdout.write(`  ${state.submodule.relativePath}  ${state.head.slice(0, 7)}\n`)
       }
       process.stdout.write(
-        'Push them — `fg-dist contribute <name>` does, for a change on its way upstream.\n'
+        'Push them — `pnpm dist contribute <name>` does, for a change on its way upstream.\n'
       )
     }
 
@@ -1142,7 +1203,7 @@ const main = async (): Promise<number> => {
         process.stdout.write(`  ${state.submodule.relativePath}  in ${canReturn(state)}\n`)
       }
       process.stdout.write(
-        'Keep them, or `fg-dist unfork <name>` to go back to upstream.\n'
+        'Keep them, or `pnpm dist unfork <name>` to go back to upstream.\n'
       )
     }
 
@@ -1183,10 +1244,10 @@ const main = async (): Promise<number> => {
     // A major is only held back when it is newer than the non-major target.
     const held = upgradable.filter((state) => state.upgrades.major !== undefined)
     process.stdout.write(`\n${upgradable.length} module(s) have newer versions. `)
-    process.stdout.write('Run `fg-dist bump` to take them')
+    process.stdout.write('Run `pnpm dist bump` to take them')
     process.stdout.write(
       held.length > 0
-        ? `, or \`fg-dist bump --major\` to include the ${held.length} major upgrade(s).\n`
+        ? `, or \`pnpm dist bump --major\` to include the ${held.length} major upgrade(s).\n`
         : '.\n'
     )
     return 0
@@ -1256,7 +1317,7 @@ const main = async (): Promise<number> => {
         const done = integrate(root, state, to, { push: args.push })
         process.stdout.write(
           done.how === 'moved'
-            ? `${line}  (fork: upstream has all of it; \`fg-dist unfork ${state.submodule.name}\` goes back)\n`
+            ? `${line}  (fork: upstream has all of it; \`pnpm dist unfork ${state.submodule.name}\` goes back)\n`
             : `${line}  (fork: merged${done.pushed ? `, pushed to ${done.pushed}` : ', not pushed'})\n`
         )
       } catch (error) {
@@ -1265,6 +1326,7 @@ const main = async (): Promise<number> => {
       }
     }
 
+    if (!args.dryRun) await refreshReadme(root)
     process.stdout.write(
       args.dryRun
         ? '\nDry run; nothing moved.\n'
@@ -1305,6 +1367,7 @@ const main = async (): Promise<number> => {
       process.stdout.write(`Ships everything ${result.parent}@${result.parentVersion} ships already.\n`)
       return 0
     }
+    if (!args.dryRun && result.added.length > 0) await refreshReadme(root)
     process.stdout.write(
       args.dryRun
         ? '\nDry run; nothing added.\n'
@@ -1383,11 +1446,12 @@ const main = async (): Promise<number> => {
   if (args.command === 'fork') {
     const [name, url] = args.names
     if (!name || !url) {
-      process.stderr.write('fork needs a module and the url of your fork: fg-dist fork <name> <url>\n')
+      process.stderr.write('fork needs a module and the url of your fork: pnpm dist fork <name> <url>\n')
       return 1
     }
     const { root, modules } = modulesFor(args.cwd, [name])
     const result = forkModule(root, modules[0], url, { ssh: args.ssh, push: args.push })
+    await refreshReadme(root)
 
     process.stdout.write(
       `${modules[0].relativePath} is checked out from ${result.url}\n` +
@@ -1403,7 +1467,7 @@ const main = async (): Promise<number> => {
     )
     process.stdout.write(
       `\nNext: make the change on a branch in ${modules[0].relativePath}, then ` +
-        `\`fg-dist contribute ${modules[0].name}\`.\nCommit .gitmodules and ${modules[0].relativePath} here.\n`
+        `\`pnpm dist contribute ${modules[0].name}\`.\nCommit .gitmodules and ${modules[0].relativePath} here.\n`
     )
     return 0
   }
@@ -1412,7 +1476,7 @@ const main = async (): Promise<number> => {
   if (args.command === 'contribute') {
     const [name] = args.names
     if (!name) {
-      process.stderr.write('contribute needs a module: fg-dist contribute <name>\n')
+      process.stderr.write('contribute needs a module: pnpm dist contribute <name>\n')
       return 1
     }
     const { root, modules } = modulesFor(args.cwd, [name])
@@ -1424,6 +1488,7 @@ const main = async (): Promise<number> => {
       )
       return 0
     }
+    await refreshReadme(root)
     process.stdout.write(`Pushed ${result.branch}.\n`)
     if (result.pinnedOn) process.stdout.write(`Pinned commit kept on ${result.pinnedOn}, which outlives the pull request's branch.\n`)
     if (result.pullRequest) {
@@ -1451,12 +1516,13 @@ const main = async (): Promise<number> => {
   if (args.command === 'unfork') {
     const [name] = args.names
     if (!name) {
-      process.stderr.write('unfork needs a module: fg-dist unfork <name>\n')
+      process.stderr.write('unfork needs a module: pnpm dist unfork <name>\n')
       return 1
     }
     const { root, modules } = modulesFor(args.cwd, [name])
     const state = inspect(modules[0], { fetch: args.fetch })
     const result = unforkModule(root, state, { to: args.to, major: args.major, force: args.force })
+    await refreshReadme(root)
     process.stdout.write(
       `${modules[0].relativePath} is checked out from ${result.url} again, at ${result.to}.\n` +
         `Commit .gitmodules and ${modules[0].relativePath} here. The fork itself is left as it is.\n`

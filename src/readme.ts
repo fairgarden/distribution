@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
@@ -18,8 +19,8 @@ import { toHttps } from './git-url.ts'
  * Browsing a distribution on GitHub shows a submodule as a commit hash and
  * nothing else, so the version a module is pinned at is invisible exactly where
  * people go looking for it. Writing it into the readmes puts it back — in the
- * distribution's, as the list of what it ships, and at the top of each module's
- * own.
+ * distribution's, as the list of what it ships under its own version, and at
+ * the top of each module's own.
  *
  * The markdown is parsed to find the block to replace and the new text is
  * spliced into the original, so everything around it keeps its wording and its
@@ -41,6 +42,24 @@ const offsets = (node: Node): [number, number] => [
   node.position?.end.offset ?? 0,
 ]
 
+/** The markers delimiting a block, found among the top-level html nodes. */
+const markers = (source: string, marker: string) => {
+  const tree = fromMarkdown(source) as unknown as { children: Node[] }
+  const comments = tree.children.filter(
+    (node) => node.type === 'html' && typeof node.value === 'string'
+  )
+
+  return {
+    tree,
+    comments,
+    start: comments.find((node) => node.value?.trim() === open(marker)),
+    end: comments.find((node) => node.value?.trim() === close(marker)),
+  }
+}
+
+const block = (marker: string, body: string): string =>
+  `${open(marker)}\n\n${body}\n\n${close(marker)}`
+
 /**
  * Replace the block a marker delimits, or add one.
  *
@@ -58,13 +77,7 @@ export const updateSection = (
    */
   after?: string
 ): string => {
-  const tree = fromMarkdown(source) as unknown as { children: Node[] }
-  const comments = tree.children.filter(
-    (node) => node.type === 'html' && typeof node.value === 'string'
-  )
-
-  const start = comments.find((node) => node.value?.trim() === open(marker))
-  const end = comments.find((node) => node.value?.trim() === close(marker))
+  const { tree, comments, start, end } = markers(source, marker)
 
   if (start && end) {
     const [, from] = offsets(start)
@@ -72,18 +85,40 @@ export const updateSection = (
     return `${source.slice(0, from)}\n\n${body}\n\n${source.slice(to)}`
   }
 
-  const block = `${open(marker)}\n\n${body}\n\n${close(marker)}`
-
   // Under the block it belongs to if that is already here, otherwise under the
   // heading — the top of the file is where a reader starts.
   const anchor =
     (after && comments.find((node) => node.value?.trim() === close(after))) ??
     tree.children.find((node) => node.type === 'heading')
 
-  if (!anchor) return `${block}\n\n${source}`
+  if (!anchor) return `${block(marker, body)}\n\n${source}`
 
   const [, at] = offsets(anchor)
-  return `${source.slice(0, at)}\n\n${block}${source.slice(at)}`
+  return `${source.slice(0, at)}\n\n${block(marker, body)}${source.slice(at)}`
+}
+
+/**
+ * Replace the block a marker delimits and keep it last, or add it there.
+ *
+ * For what only some readers need — how to release, say — which should not
+ * stand between everyone else and what the module does. A block found anywhere
+ * else is moved, so a readme written before this was put last follows it.
+ */
+export const updateLastSection = (source: string, marker: string, body: string): string => {
+  const { start, end } = markers(source, marker)
+
+  let rest = source
+  if (start && end) {
+    const [from] = offsets(start)
+    const [, to] = offsets(end)
+    const before = source.slice(0, from).trimEnd()
+    // Blank lines only: leading spaces may be an indented code block's.
+    const after = source.slice(to).replace(/^(?:[ \t]*\n)+/, '').trimEnd()
+    rest = before && after ? `${before}\n\n${after}` : before || after
+  }
+
+  const kept = rest.trimEnd()
+  return kept ? `${kept}\n\n${block(marker, body)}\n` : `${block(marker, body)}\n`
 }
 
 export interface ModuleVersion {
@@ -226,7 +261,8 @@ const versionLine = (module: ModuleVersion): string =>
  *
  * The same words in every module, with this one's version and branch names
  * filled in — so "how do I release this" is answered where someone is already
- * standing, rather than in a document they have to know exists.
+ * standing, rather than in a document they have to know exists. It goes last:
+ * most people reading a readme are there to use the module, not to release it.
  */
 export const releasingSection = (name: string, version: string): string => {
   const parsed = semver.parse(version)
@@ -240,10 +276,11 @@ export const releasingSection = (name: string, version: string): string => {
 
   const moveOn = prerelease
     ? [
-        '2. **Move it on.** `pnpm release` — opens a pull request bumping this branch',
-        `   to \`${(parsed && semver.inc(version, 'prerelease')) ?? '…'}\`, or \`pnpm release --id rc\` to change`,
-        '   identifier. A prerelease gets no maintenance branch; there is no released',
-        '   line behind it yet.',
+        '2. **Move it on.** `pnpm release` opens a pull request moving main to',
+        `   \`${(parsed && semver.inc(version, 'prerelease')) ?? '…'}\` and starting its section of the changelog, or`,
+        '   `pnpm release --id rc` to change identifier. Merging it lifts the hold. A',
+        '   prerelease gets no maintenance branch; there is no released line behind it',
+        '   yet.',
       ]
     : [
         '2. **Decide which way main moves on.** `pnpm release` on its own prints the',
@@ -255,7 +292,9 @@ export const releasingSection = (name: string, version: string): string => {
         `   | \`pnpm release --minor\` | \`${after('minor')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
         `   | \`pnpm release --major\` | \`${after('major')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
         '',
-        '   The branch it leaves behind is where fixes to what you just released go.',
+        '   Each opens a pull request starting the next version, and merging it lifts',
+        '   the hold. The branch it leaves behind is where fixes to what you just',
+        '   released go.',
         '3. **Fixing an older release.** Land it on main first, cherry-pick it onto that',
         "   release's `v<major>-<minor>` branch, then publish from there under its own",
         '   dist tag — never as `latest` unless that line is still the newest.',
@@ -267,7 +306,7 @@ export const releasingSection = (name: string, version: string): string => {
         '',
         '### Starting the next line early',
         '',
-        `\`pnpm exec fg-dist prerelease --major\` cuts \`v${(parsed?.major ?? 0) + 1}\` at`,
+        `\`pnpm dist prerelease --major\` cuts \`v${(parsed?.major ?? 0) + 1}\` at`,
         `\`${(parsed && semver.inc(version, 'premajor', 'alpha')) ?? '…'}\` and leaves main exactly where it is, so the next`,
         'line can be worked on while this one goes on shipping. Release from that branch',
         'under a dist tag of its own — `next`, say — so `latest` goes on meaning the line',
@@ -278,17 +317,57 @@ export const releasingSection = (name: string, version: string): string => {
     '## Releasing',
     '',
     `This module releases on its own. \`${version}\` is what main is working towards,`,
-    'not what is published — the version here is always the next one.',
+    'not what is published — the version here is always the next one. Its release',
+    'notes are the top section of `CHANGELOG.md`, where every pull request adds a',
+    'line linking itself.',
     '',
     '1. **Publish it.** Run the *Publish* workflow from the Actions tab, picking the',
-    '   dist tag. It refuses if that version is already on npm.',
+    '   dist tag. It refuses if that version is already on npm. Once it is out, open',
+    "   pull requests are held — their changelog check fails — so nothing is noted",
+    '   under a version that has already shipped.',
     ...moveOn,
     ...early,
+    '',
+    'A held pull request goes on once it is brought up to date with main and its',
+    "line is moved into the new version's section.",
     '',
     `Every push to main publishes \`${name}@canary\`. A canary is not a release and`,
     'carries no promise; it is there so main can be tried without a checkout.',
   ].join('\n')
 }
+
+/**
+ * How to release the distribution, written into its own readme.
+ *
+ * Without the version in it: `fg-dist release` moves a distribution's version
+ * and nothing else, so a version here would be out of date the moment it did.
+ */
+export const distributionReleasingSection = (name: string): string =>
+  [
+    '## Releasing',
+    '',
+    "The version is the month it is released in and which release of the month it",
+    "is: `26.09.01` is September 2026's first, and `26.09.01-alpha.0` that release's",
+    "first alpha. The version in `package.json` is always the next one, and its",
+    'release notes are the top section of `CHANGELOG.md` — the modules bumped since',
+    'the last release, linked to their own notes, and any change to policy.',
+    '',
+    '1. **Publish it.** Run the *Publish* workflow from the Actions tab. It refuses a',
+    '   version already on npm, or one from a month that is over. Once it is out,',
+    "   open pull requests are held — their changelog check fails — so nothing is",
+    '   noted under a version that has already shipped.',
+    '2. **Move it on.** `pnpm release` moves the version to the next alpha, or to',
+    "   the month's first release once the month has turned, and starts its section",
+    '   of the changelog. `--id beta` or `--stable` takes the release through its',
+    '   stages instead. Commit it on a branch and open a pull request; merging it',
+    '   lifts the hold.',
+    '',
+    'A held pull request goes on once it is brought up to date with main and, if it',
+    "added a line, that line is moved into the new version's section.",
+    '',
+    `Every push to main publishes \`${name}@canary\`, with the commit each module is`,
+    'pinned at. A canary is not a release and carries no promise.',
+  ].join('\n')
 
 export interface ReadmeUpdate {
   file: string
@@ -337,7 +416,18 @@ const readmeIn = async (dir: string): Promise<string> => {
  */
 export const writeReadmes = async (
   root: string,
-  { check = false }: { check?: boolean } = {}
+  {
+    check = false,
+    modules: withModules = true,
+  }: {
+    check?: boolean
+    /**
+     * In a distribution, the modules' own readmes too. Without them only the
+     * distribution's is written — all a command that moves a pin changes, and
+     * all a distribution's CI can fix.
+     */
+    modules?: boolean
+  } = {}
 ): Promise<ReadmeResult> => {
   const modules = await moduleVersions(root)
 
@@ -356,13 +446,7 @@ export const writeReadmes = async (
     }
   }
 
-  const planned: Array<{
-    file: string
-    marker: string
-    body: string
-    heading: string
-    after?: string
-  }> = []
+  const planned: PlannedBlock[] = []
 
   if (kind === 'module') {
     const own = await ownManifest(root)
@@ -380,19 +464,35 @@ export const writeReadmes = async (
         marker: 'releasing',
         body: releasingSection(own.name, own.version),
         heading: own.name,
-        after: 'version',
+        last: true,
       }
     )
   } else {
     const distribution = readDistribution(root)
-    planned.push({
-      file: await readmeIn(root),
-      marker: 'modules',
-      body: modulesTable(modules),
-      heading: distribution.name,
-    })
+    const file = await readmeIn(root)
+    // Its own version first, as a module's is, then what it ships.
+    const own = await ownManifest(root)
+    if (own) {
+      planned.push({ file, marker: 'version', body: `Version **${own.version}**`, heading: own.name })
+    }
+    planned.push(
+      {
+        file,
+        marker: 'modules',
+        body: modulesTable(modules),
+        heading: distribution.name,
+        after: 'version',
+      },
+      {
+        file,
+        marker: 'releasing',
+        body: distributionReleasingSection(distribution.name),
+        heading: distribution.name,
+        last: true,
+      }
+    )
 
-    for (const module of modules) {
+    for (const module of withModules ? modules : []) {
       const file = await readmeIn(path.join(root, module.relativePath))
       planned.push(
         { file, marker: 'version', body: versionLine(module), heading: module.name },
@@ -401,15 +501,29 @@ export const writeReadmes = async (
           marker: 'releasing',
           body: releasingSection(module.name, module.version),
           heading: module.name,
-          after: 'version',
+          last: true,
         }
       )
     }
   }
 
+  return { updates: await applyBlocks(planned, check), modules, kind }
+}
+
+interface PlannedBlock {
+  file: string
+  marker: string
+  body: string
+  heading: string
+  after?: string
+  /** Kept at the end of the file, for what only some readers need. */
+  last?: boolean
+}
+
+const applyBlocks = async (planned: PlannedBlock[], check: boolean): Promise<ReadmeUpdate[]> => {
   // Grouped, because a file carries more than one block and reporting it once
   // per block doubles both the listing and the count of what changed.
-  const byFile = new Map<string, typeof planned>()
+  const byFile = new Map<string, PlannedBlock[]>()
   for (const entry of planned) {
     byFile.set(entry.file, [...(byFile.get(entry.file) ?? []), entry])
   }
@@ -421,14 +535,34 @@ export const writeReadmes = async (
     // Applied in order to the same text: a block that has to be inserted is
     // placed relative to the ones before it.
     let updated = original ?? `# ${blocks[0].heading}\n`
-    for (const { marker, body, after } of blocks) {
-      updated = updateSection(updated, marker, body, after)
+    for (const { marker, body, after, last } of blocks) {
+      updated = last
+        ? updateLastSection(updated, marker, body)
+        : updateSection(updated, marker, body, after)
     }
 
     const changed = updated !== original
     if (changed && !check) await writeFile(file, updated)
     updates.push({ file, changed })
   }
+  return updates
+}
 
-  return { updates, modules, kind }
+/**
+ * Write a distribution's own version into its readme, and nothing else.
+ *
+ * What `fg-dist release` needs: the distribution's version moved and the
+ * modules it ships did not, so their checkouts are not read — and need not be
+ * there — and their readmes are not touched.
+ */
+export const writeOwnVersion = async (root: string): Promise<ReadmeUpdate | undefined> => {
+  const own = await ownManifest(root)
+  const file = await readmeIn(root)
+  // Updated, never started: a readme is not something a release should add.
+  if (!own || !existsSync(file)) return undefined
+  const [update] = await applyBlocks(
+    [{ file, marker: 'version', body: `Version **${own.version}**`, heading: own.name }],
+    false
+  )
+  return update
 }

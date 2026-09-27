@@ -119,7 +119,7 @@ export const inherit = async (
   if (!published) {
     throw new Error(
       `${own.extends}@${manifest.version} does not record where its modules live. ` +
-        'Publish it again with this version of fg-dist, or add them with `fg-dist add-module <url>`.'
+        'Publish it again with this version of fg-dist, or add them with `pnpm dist add-module <url>`.'
     )
   }
 

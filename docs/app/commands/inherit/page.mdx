@@ -1,16 +1,16 @@
 # `inherit`
 
 ```bash
-fg-dist inherit [--dry-run]
+pnpm dist inherit [--dry-run]
 ```
 
 Adds every module the distribution this extends ships, and this one does not.
 It is how an [extension](/overview/extending) starts:
 
 ```bash
-fg-dist init distribution acme --name @acme/core --extends @fairgarden/core
+pnpm dist init distribution acme --name @acme/core --extends @fairgarden/core
 cd acme && pnpm install
-fg-dist inherit
+pnpm dist inherit
 ```
 
 ```

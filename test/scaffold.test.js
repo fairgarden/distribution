@@ -241,6 +241,22 @@ test('a monolith repo runs the monolith, or each app on its own, and never the d
   }
 })
 
+test('every command is `pnpm dist <command>`, and a distribution has what its checks run', async () => {
+  for (const files of [monolithRepo('@acme/core'), distributionRepo('@acme/core')]) {
+    const root = await scaffold(files)
+    const pkg = readJson(root, 'package.json')
+    assert.equal(pkg.scripts.dist, 'fg-dist')
+    // Installed, not assumed to be on the PATH.
+    assert.ok(pkg.devDependencies['@fairgarden/distribution'])
+  }
+  const root = await scaffold(distributionRepo('@acme/core'))
+  const { scripts } = readJson(root, 'package.json')
+  // What its changelog and verify workflows run, and what its readme says to.
+  for (const name of ['changelog', 'release']) assert.ok(scripts[name], name)
+  assert.match(readFileSync(path.join(root, '.github/workflows/verify.yml'), 'utf8'), /pnpm run dist verify/)
+  assert.doesNotMatch(readFileSync(path.join(root, 'Readme.md'), 'utf8'), /date-based/)
+})
+
 test('a separate distribution runs every app, with no monolith to build for', async () => {
   const root = await scaffold(distributionRepo('@acme/core', undefined, undefined, { monolith: false }))
   const { scripts } = readJson(root, 'package.json')

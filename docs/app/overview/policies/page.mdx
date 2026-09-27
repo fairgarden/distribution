@@ -53,7 +53,7 @@ Each service that runs it takes a copy during its build:
 { "build": "fg-dist policy use && next build" }
 ```
 
-and [`fg-dist policy setup`](/commands/policy#setup) tells turbo to build the
+and [`pnpm dist policy setup`](/commands/policy#setup) tells turbo to build the
 policy before each of them. Nothing is published and nothing is signed: each
 deployment runs what is in the commit it was built from. A service built on
 its own, outside a distribution, has no policy to copy, and its built-in
@@ -61,7 +61,7 @@ rules decide.
 
 ## Starting one
 
-`fg-dist init distribution` scaffolds an empty `policies/`. Until it has
+`pnpm dist init distribution` scaffolds an empty `policies/`. Until it has
 rules, the modules' own decide — the same as their built-in rules. Each
 module's `policies/` says what it asks and where an organization's rules go;
 its `examples/` has an organization's rules to start from.

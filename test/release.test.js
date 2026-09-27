@@ -695,8 +695,19 @@ test('a module on an older fg-dist is moved up to the one whose workflows it get
 
   await writeWorkflows(root)
   const range = JSON.parse(readFileSync(file, 'utf8')).devDependencies['@fairgarden/distribution']
-  const own = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
-  assert.equal(range, `^${own}`)
+  const { toolRelease } = await import('../dist/workflows.js')
+  assert.equal(range, `^${(await toolRelease()).floor}`)
+})
+
+test('a module is given the newest fg-dist released, not the one main is working towards', async () => {
+  const { releasedFloor } = await import('../dist/workflows.js')
+  const tags = ['v0.1.0-alpha.3', 'v0.1.0-alpha.4', 'v26.09.01-alpha.0']
+  // Released: itself.
+  assert.equal(releasedFloor('0.1.0-alpha.4', tags), '0.1.0-alpha.4')
+  // main moved on after releasing alpha.4: npm has no alpha.5 to install.
+  assert.equal(releasedFloor('0.1.0-alpha.5', tags), '0.1.0-alpha.4')
+  // Installed from npm, there are no tags to go by, and it is a release.
+  assert.equal(releasedFloor('0.1.0-alpha.5', undefined), '0.1.0-alpha.5')
 })
 
 test('the publish workflows leave npm to trusted publishing', async () => {

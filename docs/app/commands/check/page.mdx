@@ -1,7 +1,7 @@
 # `check`
 
 ```bash
-fg-dist check
+pnpm dist check
 ```
 
 Fails when the distribution ships anything older than the one it extends. Run it
@@ -11,7 +11,7 @@ in CI.
 @acme/core extends @fairgarden/core, so it cannot ship anything older:
   @fg/id 1.1.0 is older than the 1.2.3 @fairgarden/core ships
 An extension may move ahead of what it extends, never behind it.
-`fg-dist bump` moves a module to its newest release; a fork, by merging upstream's.
+`pnpm dist bump` moves a module to its newest release; a fork, by merging upstream's.
 ```
 
 A module the parent ships and this does not is a violation too;

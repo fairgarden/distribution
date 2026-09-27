@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { updateSection } from '../dist/readme.js'
+import { updateLastSection, updateSection } from '../dist/readme.js'
 
 test('adds a block after the first heading', () => {
   const out = updateSection('# Title\n\nSome prose.\n', 'version', '**1.0.0**')
@@ -78,6 +78,69 @@ After.
   assert.doesNotMatch(out, /1\.0\.0/)
   assert.match(out, /\| `b` \|/)
   assert.match(out, /After\./)
+})
+
+test('a last block goes at the end, and stays there', () => {
+  const once = updateLastSection('# Title\n\nProse.\n\n## Usage\n\nMore.\n', 'releasing', 'R')
+  assert.ok(once.endsWith('More.\n\n<!-- fg:releasing -->\n\nR\n\n<!-- /fg:releasing -->\n'))
+  assert.equal(updateLastSection(once, 'releasing', 'R'), once)
+  assert.match(updateLastSection(once, 'releasing', 'R2'), /\n\nR2\n\n<!-- \/fg:releasing -->\n$/)
+})
+
+test('a last block written anywhere else is moved to the end', () => {
+  // where readmes had it before: straight under the version, above the prose
+  const before = `# Title
+
+<!-- fg:version -->
+
+V
+
+<!-- /fg:version -->
+
+<!-- fg:releasing -->
+
+## Releasing
+
+Old.
+
+<!-- /fg:releasing -->
+
+Prose.
+
+    indented code
+
+## Usage
+
+More.
+`
+  const out = updateLastSection(before, 'releasing', '## Releasing\n\nNew.')
+  assert.equal(
+    out,
+    `# Title
+
+<!-- fg:version -->
+
+V
+
+<!-- /fg:version -->
+
+Prose.
+
+    indented code
+
+## Usage
+
+More.
+
+<!-- fg:releasing -->
+
+## Releasing
+
+New.
+
+<!-- /fg:releasing -->
+`
+  )
 })
 
 import { execFileSync } from 'node:child_process'
@@ -266,4 +329,46 @@ test('refuses a repository with nothing to record', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'empty-'))
   git(root, ['init', '-q', '-b', 'main'])
   await assert.rejects(writeReadmes(root), /nothing to record/)
+})
+
+test('how to release comes after everything else in each readme', async () => {
+  const root = distributionWith({ tag: 'v1.2.0' })
+  const moduleReadme = path.join(root, 'apps/widget/Readme.md')
+  writeFileSync(moduleReadme, '# @acme/widget\n\nProse.\n\n## Usage\n\nUse it.\n')
+  await writeReadmes(root)
+
+  for (const file of [path.join(root, 'Readme.md'), moduleReadme]) {
+    const out = readFileSync(file, 'utf8')
+    assert.ok(out.endsWith('<!-- /fg:releasing -->\n'), file)
+    assert.ok(out.indexOf('## Releasing') > out.lastIndexOf('Prose.'), file)
+  }
+  assert.ok(readFileSync(moduleReadme, 'utf8').indexOf('## Releasing') > readFileSync(moduleReadme, 'utf8').indexOf('Use it.'))
+  // a distribution's is about its calendar versions, not a module's lines
+  assert.match(table(root), /The version is the month it is released in/)
+  assert.doesNotMatch(table(root), /maintenance branch/)
+
+  const again = await writeReadmes(root, { check: true })
+  assert.ok(again.updates.every((update) => !update.changed))
+})
+
+test('a distribution states its own version above what it ships', async () => {
+  const root = distributionWith({ tag: 'v1.2.0' })
+  const manifest = path.join(root, 'package.json')
+  writeFileSync(manifest, JSON.stringify({ name: '@acme/core', version: '26.09.01-alpha.0' }))
+  await writeReadmes(root)
+
+  const out = table(root)
+  assert.match(out, /^# @acme\/core\n\n<!-- fg:version -->\n\nVersion \*\*26\.09\.01-alpha\.0\*\*/)
+  assert.ok(out.indexOf('fg:version') < out.indexOf('fg:modules'))
+})
+
+test('a readme that had the table first gets the version above it', async () => {
+  const root = distributionWith({ tag: 'v1.2.0' })
+  await writeReadmes(root)
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: '@acme/core', version: '26.09.01-alpha.0' }))
+  await writeReadmes(root)
+
+  const out = table(root)
+  assert.ok(out.indexOf('fg:version') < out.indexOf('fg:modules'))
+  assert.equal(out.match(/<!-- fg:modules -->/g).length, 1)
 })

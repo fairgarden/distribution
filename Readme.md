@@ -6,25 +6,6 @@ Version **0.1.0-alpha.5**
 
 <!-- /fg:version -->
 
-<!-- fg:releasing -->
-
-## Releasing
-
-This module releases on its own. `0.1.0-alpha.5` is what main is working towards,
-not what is published — the version here is always the next one.
-
-1. **Publish it.** Run the *Publish* workflow from the Actions tab, picking the
-   dist tag. It refuses if that version is already on npm.
-2. **Move it on.** `pnpm release` — opens a pull request bumping this branch
-   to `0.1.0-alpha.6`, or `pnpm release --id rc` to change
-   identifier. A prerelease gets no maintenance branch; there is no released
-   line behind it yet.
-
-Every push to main publishes `@fairgarden/distribution@canary`. A canary is not a release and
-carries no promise; it is there so main can be tried without a checkout.
-
-<!-- /fg:releasing -->
-
 Ship a set of versioned modules together.
 
 End users do not care about semver — they want to know how old their copy is,
@@ -95,3 +76,30 @@ fg-dist prerelease --major   # start the next line on a branch, leaving main alo
 
 Mounting a distribution's apps into one Next deployment is a separate concern,
 handled by `@fairgarden/monolith`.
+
+<!-- fg:releasing -->
+
+## Releasing
+
+This module releases on its own. `0.1.0-alpha.5` is what main is working towards,
+not what is published — the version here is always the next one. Its release
+notes are the top section of `CHANGELOG.md`, where every pull request adds a
+line linking itself.
+
+1. **Publish it.** Run the *Publish* workflow from the Actions tab, picking the
+   dist tag. It refuses if that version is already on npm. Once it is out, open
+   pull requests are held — their changelog check fails — so nothing is noted
+   under a version that has already shipped.
+2. **Move it on.** `pnpm release` opens a pull request moving main to
+   `0.1.0-alpha.6` and starting its section of the changelog, or
+   `pnpm release --id rc` to change identifier. Merging it lifts the hold. A
+   prerelease gets no maintenance branch; there is no released line behind it
+   yet.
+
+A held pull request goes on once it is brought up to date with main and its
+line is moved into the new version's section.
+
+Every push to main publishes `@fairgarden/distribution@canary`. A canary is not a release and
+carries no promise; it is there so main can be tried without a checkout.
+
+<!-- /fg:releasing -->

@@ -5,14 +5,14 @@ the module, ship the fix, offer it upstream, and go back to upstream once it
 has the fix — or keep the fork.
 
 ```bash
-fg-dist fork id https://github.com/acme/id.git   # check it out from your fork
+pnpm dist fork id https://github.com/acme/id.git   # check it out from your fork
 cd apps/id && git switch -c fix-login            # make the change on a branch
 git commit -am "Fix the login redirect"
-fg-dist contribute id                            # push it, open a pull request upstream
+pnpm dist contribute id                            # push it, open a pull request upstream
 git add .gitmodules apps/id && git commit        # ship it meanwhile
 
-fg-dist sync                                     # later: has upstream taken it?
-fg-dist unfork id                                # go back to the release that has it
+pnpm dist sync                                     # later: has upstream taken it?
+pnpm dist unfork id                                # go back to the release that has it
 ```
 
 ## What a fork is

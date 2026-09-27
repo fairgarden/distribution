@@ -1,7 +1,7 @@
 # `overrides`
 
 ```bash
-fg-dist overrides [--check]
+pnpm dist overrides [--check]
 ```
 
 Points the workspace at this distribution's own checkouts, so a module resolves
@@ -47,7 +47,7 @@ the block themselves, since both change the set of modules. Run it by hand after
 adding a submodule with plain git, and in CI to catch that:
 
 ```bash
-fg-dist overrides --check
+pnpm dist overrides --check
 ```
 
 The block is delimited by comments and spliced in place, so everything else in

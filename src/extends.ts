@@ -226,8 +226,8 @@ export const describeViolations = (report: ExtendsReport): string => {
     `${distribution.name} extends ${parent?.name}, so it cannot ship anything older:`,
     ...lines,
     'An extension may move ahead of what it extends, never behind it.',
-    ...(behind ? ["`fg-dist bump` moves a module to its newest release; a fork, by merging upstream's."] : []),
-    ...(missing ? [`\`fg-dist inherit\` adds what ${parent?.name} ships and this does not.`] : []),
+    ...(behind ? ["`pnpm dist bump` moves a module to its newest release; a fork, by merging upstream's."] : []),
+    ...(missing ? [`\`pnpm dist inherit\` adds what ${parent?.name} ships and this does not.`] : []),
   ].join('\n')
 }
 
