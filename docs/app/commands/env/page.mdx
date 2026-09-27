@@ -18,7 +18,12 @@ A distribution with `apps/monolith` deploys it: one Vercel project, serving
 every app, which has every app's variables — and the monolith's own, if it
 declares any. Without one, each app is a project of its own, and each project
 has its own. A value two apps have to share — the secret one signs in to the
-other with — is set alike in both.
+other with — is set alike in both, when one says so with `sameAs`. Two projects
+that name a secret alike, untied, each have their own.
+
+Two apps in one deployment may declare the same variable, alike in how it is
+set. It is needed while any of them needs it: its `unless` excuses it only when
+every app declaring it says so.
 
 Every app is read from its checkout, so each submodule has to be checked out
 (`git submodule update --init`); one that is not is an error, not an app that

@@ -267,6 +267,39 @@ describe('what a deployment needs', () => {
     ])
   })
 
+  test('two apps needing one variable excuse it only when both would', () => {
+    const smtp = { description: 'Sends mail.', required: 'deployed' }
+    const app = (name, declaration) => ({ name, root: '/', env: { SMTP_URL: declaration }, migrations: undefined })
+    const mocks = app('@acme/mocks', { ...smtp, unless: ['MOCK_EMAIL'] })
+    const sends = app('@acme/sends', smtp)
+    const env = { MOCK_EMAIL: 'true' }
+    for (const apps of [[mocks, sends], [sends, mocks]]) {
+      const needed = requirementsFor({ name: 'mono', root: '/', apps }, 'production')
+      assert.deepEqual(missing(needed, env).map((requirement) => requirement.variable), ['SMTP_URL'])
+    }
+    const both = requirementsFor({ name: 'mono', root: '/', apps: [mocks, app('@acme/also', { ...smtp, unless: ['MOCK_EMAIL'] })] }, 'production')
+    assert.deepEqual(missing(both, env), [])
+  })
+
+  test('finds an app that exports only an ESM entry, and hides its package.json', () => {
+    const root = distribution({ monolith: true })
+    const dir = path.join(root, 'apps', 'monolith')
+    const esm = path.join(root, 'apps', 'esm')
+    mkdirSync(esm)
+    json(path.join(esm, 'package.json'), {
+      name: '@acme/esm',
+      type: 'module',
+      exports: { '.': { import: './index.js' } },
+      fairgarden: { env: { ACME_ESM_KEY: { description: 'k', required: 'deployed' } } },
+    })
+    writeFileSync(path.join(esm, 'index.js'), 'export {}\n')
+    symlinkSync(esm, path.join(dir, 'node_modules', '@acme', 'esm'), 'dir')
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'))
+    manifest.dependencies['@acme/esm'] = '*'
+    json(path.join(dir, 'package.json'), manifest)
+    assert.ok(deploymentAt(dir).apps.some((app) => app.name === '@acme/esm'))
+  })
+
   test('is met by any of its variables, or excused by what it is not needed alongside', () => {
     const root = distribution({ monolith: true })
     const needed = requirementsFor(deploymentAt(path.join(root, 'apps', 'monolith')), 'production')
@@ -374,6 +407,33 @@ describe('setting up Vercel', () => {
     const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
     assert.doesNotMatch(result.stderr, /failed/)
     assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_CLAIMS').value, 'membership')
+  })
+
+  test('keeps a secret two projects name alike, untied, apart', async () => {
+    const root = distribution({ monolith: false })
+    // id names a session key of its own as members does
+    const idManifest = path.join(root, 'apps', 'id', 'package.json')
+    const id = JSON.parse(readFileSync(idManifest, 'utf8'))
+    id.fairgarden.env.ACME_MEMBERS_SECRET = MEMBERS.fairgarden.env.ACME_MEMBERS_SECRET
+    json(idManifest, id)
+    const set = (value, updatedAt) => ({ production: { value, sensitive: true, updatedAt } })
+    const vercel = fakeVercel({
+      'acme-members': { ACME_MEMBERS_SECRET_A: set('members-own', 1), ACME_MEMBERS_SECRET_CURRENT: set('A', 1) },
+    })
+    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    // members' is left as it was; id gets one of its own
+    assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_SECRET'), ['members-own'])
+    const [idOwn] = vercel.secret('acme-id', 'ACME_MEMBERS_SECRET')
+    assert.ok(idOwn && idOwn !== 'members-own')
+
+    vercel.deploy()
+    const result = await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 0, result.stderr)
+    const [idNow, idBefore] = vercel.secret('acme-id', 'ACME_MEMBERS_SECRET')
+    const [membersNow, membersBefore] = vercel.secret('acme-members', 'ACME_MEMBERS_SECRET')
+    assert.equal(idBefore, idOwn)
+    assert.equal(membersBefore, 'members-own')
+    assert.notEqual(idNow, membersNow)
   })
 
   test('moves a tied secret with its group once, however many of the group were missing', async () => {

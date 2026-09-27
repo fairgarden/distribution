@@ -128,6 +128,16 @@ interface Member {
 }
 
 /**
+ * What shares one value: a tied group, wherever it is set, and an untied
+ * secret only with itself in its own project. Two apps deployed apart that
+ * name a secret alike have not said it is one.
+ */
+const shareKey = (groups: Map<string, string[]>, remote: Remote, name: string): string => {
+  const group = groups.get(name) ?? [name]
+  return group.length > 1 ? group[0] : `${remote.at}\0${name}`
+}
+
+/**
  * The slot a group's new value goes into: one no sender of it is using, so
  * nothing that sends the secret has its value overwritten while what checks
  * it could still be accepting only that. After a rotation that stopped between
@@ -302,15 +312,16 @@ export const planSetup = async (
 
       if (declaration.rotate) {
         const group = groups.get(variable) ?? [variable]
-        let chosen = decided.get(group[0])
+        const shared = shareKey(groups, remote, variable)
+        let chosen = decided.get(shared)
         if (!chosen) {
-          const already = remotes.flatMap((each) =>
+          const already = (group.length > 1 ? remotes : [remote]).flatMap((each) =>
             group
               .filter((tied) => isPresent(each.existing, tied))
               .map((tied): Member => ({ remote: each, name: tied, verifies: Boolean(rotated.get(tied)?.verifies) }))
           )
           chosen = { value: newSecret(), slot: targetSlot(already) }
-          decided.set(group[0], chosen)
+          decided.set(shared, chosen)
           for (const { remote: where, name } of already) {
             // This one is written below, as what was missing.
             if (where === remote && name === variable) continue
@@ -379,7 +390,7 @@ const rotatedIn = (remotes: Remote[]): Member[] => {
           assertAgree(variable, already, app.name, declaration)
           continue
         }
-        seen.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
+        seen.set(variable, { variable, anyOf: [variable], apps: [app.name], excusedBy: [], declaration })
         found.push({ remote, name: variable, verifies: Boolean(declaration.verifies) })
       }
     }
@@ -428,9 +439,10 @@ export const planCatchUp = (
   // A project sending a secret waits for every other that checks it.
   const waitsFor = new Map<Remote, Set<Remote>>()
   for (const sender of behind.filter((member) => !member.verifies)) {
-    const group = groups.get(sender.name) ?? [sender.name]
+    const key = shareKey(groups, sender.remote, sender.name)
     for (const checker of behind) {
-      if (!checker.verifies || checker.remote === sender.remote || !group.includes(checker.name)) continue
+      if (!checker.verifies || checker.remote === sender.remote) continue
+      if (shareKey(groups, checker.remote, checker.name) !== key) continue
       waitsFor.set(sender.remote, (waitsFor.get(sender.remote) ?? new Set()).add(checker.remote))
     }
   }
@@ -490,16 +502,16 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
 
   // One new value, and one slot, for each group, chosen from all of it.
   const chosen = new Map<string, { value: string; slot: Slot }>()
-  for (const { name } of found) {
-    const key = groupOf(name)[0]
+  for (const { remote, name } of found) {
+    const key = shareKey(groups, remote, name)
     if (chosen.has(key)) continue
-    const members = found.filter((each) => groupOf(each.name)[0] === key)
+    const members = found.filter((each) => shareKey(groups, each.remote, each.name) === key)
     chosen.set(key, { value: newSecret(), slot: targetSlot(members) })
   }
 
   const phases: Rotation[][] = [[], []]
   for (const { remote, name, verifies } of found) {
-    const { value, slot } = chosen.get(groupOf(name)[0])!
+    const { value, slot } = chosen.get(shareKey(groups, remote, name))!
     // Set by hand before the slots, it was kept alongside them for one
     // rotation; this is the next.
     const removes = currentSlot(remote.existing, name) && remote.existing.has(name) ? [name] : []

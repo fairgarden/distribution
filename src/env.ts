@@ -75,6 +75,11 @@ export interface Requirement {
   database?: boolean
   /** The apps that need it. */
   apps: string[]
+  /**
+   * Each of those apps' `unless`: it is excused only when every app needing
+   * it is, whichever declared it first.
+   */
+  excusedBy: string[][]
   declaration: EnvDeclaration
 }
 
@@ -238,7 +243,8 @@ export const requirementsFor = (
       if (known) {
         assertAgree(variable, known, app.name, declaration)
         known.apps.push(app.name)
-      } else found.set(variable, { variable, anyOf, apps: [app.name], declaration })
+        known.excusedBy.push(declaration.unless ?? [])
+      } else found.set(variable, { variable, anyOf, apps: [app.name], excusedBy: [declaration.unless ?? []], declaration })
     }
   }
 
@@ -249,6 +255,7 @@ export const requirementsFor = (
     const known = found.get(key)
     if (known) {
       known.apps.push(app.name)
+      known.excusedBy.push([])
       continue
     }
     found.set(key, {
@@ -256,6 +263,7 @@ export const requirementsFor = (
       anyOf: app.migrations.database,
       database: true,
       apps: [app.name],
+      excusedBy: [[]],
       declaration: {
         description: 'Its database. Connecting Neon to the project sets DATABASE_URL.',
         required: 'deployed',
@@ -296,7 +304,7 @@ export const missing = (requirements: Requirement[], env: Env): Requirement[] =>
       !(requirement.declaration.rotate
         ? rotatedIsSet(env, requirement.variable)
         : requirement.anyOf.some((variable) => isSet(env, variable))) &&
-      !(requirement.declaration.unless ?? []).some((variable) => isSet(env, variable))
+      !requirement.excusedBy.every((unless) => unless.some((variable) => isSet(env, variable)))
   )
 
 /** What to do about one missing variable, in words for a build log. */

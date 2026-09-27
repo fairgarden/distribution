@@ -304,11 +304,30 @@ const refuseNewer = (migrations: Migration[], applied: Map<string, AppliedRow>):
   }
 }
 
+/**
+ * What has run has to be where the history starts. A migration a merged
+ * branch put before one already applied would run after it, against a schema
+ * it was not written for.
+ */
+const refuseGaps = (migrations: Migration[], applied: Map<string, AppliedRow>): void => {
+  const first = migrations.findIndex((migration) => !applied.has(migration.tag))
+  if (first === -1) return
+  const after = migrations.slice(first + 1).filter((migration) => applied.has(migration.tag))
+  if (after.length > 0) {
+    throw new Error(
+      `${migrations[first].tag} comes before ${after.map((migration) => migration.tag).join(', ')}, which ran, ` +
+        'and it has not: a branch put it earlier in the history than what is applied. Generate it again, ' +
+        'after them, so it runs in the same order everywhere.'
+    )
+  }
+}
+
 export const migrate = (pool: MigrationPool, directory: string, journal: Journal): Promise<string[]> =>
   withLock(pool, journal, { writes: true }, async (client) => {
     const migrations = readMigrations(directory)
     const applied = await readApplied(client, journal.table)
     refuseNewer(migrations, applied)
+    refuseGaps(migrations, applied)
     for (const migration of migrations) {
       const row = applied.get(migration.tag)
       if (row && row.hash !== migration.hash) {

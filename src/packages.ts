@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { declaresMonolith } from './config-edit.ts'
 
@@ -19,22 +18,16 @@ export const composesApps = (dir: string): boolean => {
   return false
 }
 
-/** Where a package is installed, seen from `base`, whether or not it exports its package.json. */
+/**
+ * Where a package is installed, seen from `base`: the node_modules folders
+ * Node looks in, nearest first. Not by resolving it, which goes by its exports
+ * map — one that hides package.json, or offers an ESM-only app nothing to
+ * require, would have it missed.
+ */
 export const packageDir = (base: string, name: string): string | undefined => {
-  // createRequire takes nothing but an absolute path.
-  const require = createRequire(path.resolve(base, 'package.json'))
-  try {
-    return path.dirname(require.resolve(`${name}/package.json`))
-  } catch {
-    // Not exported: find it from its entry point instead.
+  for (let dir = path.resolve(base); ; dir = path.dirname(dir)) {
+    const installed = path.join(dir, 'node_modules', ...name.split('/'))
+    if (existsSync(path.join(installed, 'package.json'))) return realpathSync(installed)
+    if (path.dirname(dir) === dir) return undefined
   }
-  try {
-    for (let dir = path.dirname(require.resolve(name)); path.dirname(dir) !== dir; dir = path.dirname(dir)) {
-      const file = path.join(dir, 'package.json')
-      if (existsSync(file) && (JSON.parse(readFileSync(file, 'utf8')) as { name?: string }).name === name) return dir
-    }
-  } catch {
-    // Not installed here.
-  }
-  return undefined
 }

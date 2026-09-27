@@ -49,6 +49,11 @@ environment once each preview has a database of its own, as Neon's branching
 gives it. Until then, a preview reaching production's database would take a
 branch's migrations there before the branch is merged.
 
+Migrations run in the order drizzle-kit's journal lists them, and what has run
+has to be where that starts. A branch merged with a migration earlier in the
+journal than one already applied is refused rather than run after it, against
+a schema it was not written for: generate it again, after them.
+
 On Vercel the Build Command has to run the root's `build` — `pnpm build`, the
 default when the Root Directory is the repository — or migrating does not run
 at all.

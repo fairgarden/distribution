@@ -133,6 +133,16 @@ describe('the migrator', () => {
     assert.deepEqual(await tables(database, 'fresh\\_'), [])
   })
 
+  test('runs nothing a branch put before what has run already', async () => {
+    const journal = { table: 'g_migrations', lock: 49 }
+    const first = { tag: '0000_a', up: 'create table g_a (id int);', down: 'drop table g_a;' }
+    const later = { tag: '0002_c', up: 'create table g_c (id int);', down: 'drop table g_c;' }
+    await migrate(database.pool, folder([first, later]), journal)
+    const merged = folder([first, { tag: '0001_b', up: 'create table g_b (id int);', down: 'drop table g_b;' }, later])
+    await assert.rejects(migrate(database.pool, merged, journal), /0001_b comes before 0002_c, which ran, and it has not/)
+    assert.deepEqual(await tables(database, 'g\\_'), ['g_a', 'g_c', 'g_migrations'])
+  })
+
   test('rolls nothing back under migrations only a newer version knows', async () => {
     const journal = { table: 'n_migrations', lock: 46 }
     const newer = folder([
