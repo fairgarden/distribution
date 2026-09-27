@@ -88,8 +88,23 @@ export const addVariable = (
   )
 }
 
-export const updateVariable = (target: VercelProject, name: string, environment: string, value: string): void => {
-  run(target, ['env', 'update', name, environment, '--project', target.project, '--yes'], value)
+/**
+ * Vercel keeps a variable's visibility on update unless told otherwise, so a
+ * secret is said to be one every time: one first added readable becomes
+ * sensitive now, rather than take its new value readable too.
+ */
+export const updateVariable = (
+  target: VercelProject,
+  name: string,
+  environment: string,
+  value: string,
+  { sensitive = false }: { sensitive?: boolean } = {}
+): void => {
+  run(
+    target,
+    ['env', 'update', name, environment, '--project', target.project, '--yes', ...(sensitive ? ['--sensitive'] : [])],
+    value
+  )
 }
 
 /** Set it, whether it is there or not; `exists` says which, from a listing. */
@@ -100,7 +115,7 @@ export const setVariable = (
   value: string,
   { sensitive, exists }: { sensitive: boolean; exists: boolean }
 ): void => {
-  if (exists) updateVariable(target, name, environment, value)
+  if (exists) updateVariable(target, name, environment, value, { sensitive })
   else addVariable(target, name, environment, value, { sensitive })
 }
 

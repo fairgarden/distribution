@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { declaredMigrations, type Migrations } from './migrations.ts'
-import { slotVariable } from './secrets.ts'
+import { pointerVariable, SLOTS, slotVariable } from './secrets.ts'
 import { packageDir } from './packages.ts'
 import { submodules } from './submodules.ts'
 
@@ -105,6 +105,9 @@ export const envApp = (root: string): EnvApp | undefined => {
       throw wrong('"required" is neither deployed nor production')
     }
     if (declaration.rotate && !declaration.generate) throw wrong('only a generated secret can be rotated')
+    // One value is made for a tied group only where it is a rotated secret;
+    // anything else would be made, or asked for, once for each side.
+    if (declaration.sameAs && !declaration.rotate) throw wrong('"sameAs" ties rotated secrets, and this is not one')
     if (declaration.sameAs && !VARIABLE.test(declaration.sameAs)) throw wrong('"sameAs" is not a variable name')
   }
   return { name, root, env, migrations }
@@ -206,13 +209,34 @@ export const requirementsFor = (
 
 type Env = Record<string, string | undefined>
 
+/**
+ * What a variable Vercel will not show reads as, in an environment made from
+ * a listing: set, value unknown.
+ */
+export const UNREADABLE = '\u0000unreadable'
+
 const isSet = (env: Env, variable: string): boolean => Boolean(env[variable]?.trim())
+
+/**
+ * Whether a rotated secret is usable, as the app reads it: set by hand, or the
+ * slot its pointer names is set. A slot with no pointer at it is no secret at
+ * all — as when setting one up stopped between the two. A pointer that cannot
+ * be read is taken at its word.
+ */
+const rotatedIsSet = (env: Env, variable: string): boolean => {
+  if (isSet(env, variable)) return true
+  const pointer = env[pointerVariable(variable)]?.trim()
+  if (pointer === UNREADABLE) return SLOTS.some((slot) => isSet(env, slotVariable(variable, slot)))
+  return (pointer === 'A' || pointer === 'B') && isSet(env, slotVariable(variable, pointer))
+}
 
 /** The requirements `env` does not meet. */
 export const missing = (requirements: Requirement[], env: Env): Requirement[] =>
   requirements.filter(
     (requirement) =>
-      !requirement.anyOf.some((variable) => isSet(env, variable)) &&
+      !(requirement.declaration.rotate
+        ? rotatedIsSet(env, requirement.variable)
+        : requirement.anyOf.some((variable) => isSet(env, variable))) &&
       !(requirement.declaration.unless ?? []).some((variable) => isSet(env, variable))
   )
 

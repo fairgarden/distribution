@@ -137,7 +137,8 @@ if (command === 'env' && sub === 'list') {
   if (sub === 'add' && variable[environment]) { process.stderr.write('exists'); process.exit(1) }
   if (sub === 'update' && !variable[environment]) { process.stderr.write('missing'); process.exit(1) }
   const forced = state.policy === 'sensitive' && environment !== 'development'
-  const sensitive = forced || (sub === 'add' ? args.includes('--sensitive') : variable[environment].sensitive)
+  // Like Vercel: an update keeps what it was unless told it is sensitive now.
+  const sensitive = forced || args.includes('--sensitive') || (sub === 'update' && variable[environment].sensitive)
   variable[environment] = { value: stdin(), sensitive, updatedAt: state.clock++ }
 } else if (command === 'env' && sub === 'remove') {
   delete project()[name]?.[environment]
@@ -274,6 +275,26 @@ describe('setting up Vercel', () => {
     assert.match(result.stderr, /acme-members {2}ACME_MEMBERS_ID_URL: nothing to set it to/)
   })
 
+  test('takes a slot nothing points at for no secret, and repairs it', async () => {
+    const root = distribution({ monolith: true })
+    // as a setup that stopped between the slot and its pointer leaves it
+    const stranded = { 'acme-core': { ACME_MEMBERS_SECRET_A: { production: { value: 'x', sensitive: true, updatedAt: 0 } } } }
+    const check = await fgDist(path.join(root, 'apps', 'monolith'), ['env', 'check', '--build'], {
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      ACME_MEMBERS_SECRET_A: 'x',
+    })
+    assert.match(check.stderr, /ACME_MEMBERS_SECRET {2}\(@acme\/members\)/)
+
+    const vercel = fakeVercel(stranded)
+    const setup = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    // unresolved only for what it cannot know, and nothing it tried failed
+    assert.doesNotMatch(setup.stderr, /failed/)
+    const [current] = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
+    assert.ok(current && current !== 'x')
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, 'B')
+  })
+
   test('fills in a shared secret one side has by moving both to a new one, reading neither', async () => {
     const root = distribution({ monolith: false })
     const vercel = fakeVercel({
@@ -306,6 +327,17 @@ describe('setting up Vercel', () => {
       else process.env.VERCEL_CLI = saved
     }
     assert.equal(readFileSync(manifest, 'utf8'), before)
+  })
+})
+
+describe('what an app may declare', () => {
+  test('ties only rotated secrets together, which are made once for every side', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'declared-'))
+    json(path.join(dir, 'package.json'), {
+      name: '@acme/app',
+      fairgarden: { env: { A_KEY: { description: 'x', generate: 'secret', sameAs: 'B_KEY' } } },
+    })
+    assert.throws(() => envApp(dir), /"sameAs" ties rotated secrets, and this is not one/)
   })
 })
 
@@ -368,6 +400,22 @@ describe('rotating', () => {
       assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, expected)
       assert.equal(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').length, 2)
     }
+  })
+
+  test('makes a slot first set readable sensitive, the moment it is rotated into', async () => {
+    const root = distribution({ monolith: true })
+    // as an earlier fg-dist left them: readable
+    const readable = (value, updatedAt) => ({ production: { value, sensitive: false, updatedAt } })
+    const vercel = fakeVercel({
+      'acme-core': {
+        ACME_MEMBERS_SECRET_A: readable('now', 2),
+        ACME_MEMBERS_SECRET_B: readable('before', 1),
+        ACME_MEMBERS_SECRET_CURRENT: readable('A', 2),
+      },
+    })
+    await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_B').sensitive, true)
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, 'B')
   })
 
   test('takes a secret set by hand into its slots, keeping it for one rotation', async () => {

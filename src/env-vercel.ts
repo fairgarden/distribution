@@ -9,6 +9,7 @@ import {
   type EnvApp,
   type EnvDeclaration,
   type Requirement,
+  UNREADABLE,
 } from './env.ts'
 import {
   listVariables,
@@ -114,7 +115,8 @@ export const remotesOf = async (
   const remotes: Remote[] = []
   let changed = false
   for (const deployment of distributionDeployments(distribution)) {
-    const at = path.relative(distribution, deployment.root) || '.'
+    // Kept in package.json and read on any platform: always `/`.
+    const at = path.relative(distribution, deployment.root).split(path.sep).join('/') || '.'
     let name: string | undefined = config.projects[at]
     if (!name && project) {
       name = await project(at, deployment)
@@ -138,7 +140,7 @@ export const remotesOf = async (
 
 /** What is set, as an environment: a sensitive variable is set without a value to read. */
 const asEnv = (existing: Map<string, VercelVariable>): Record<string, string> =>
-  Object.fromEntries([...existing].map(([key, variable]) => [key, variable.value ?? 'set']))
+  Object.fromEntries([...existing].map(([key, variable]) => [key, variable.value ?? UNREADABLE]))
 
 const everyApp = (remotes: Remote[]): EnvApp[] => remotes.flatMap((remote) => remote.deployment.apps)
 
@@ -241,6 +243,8 @@ export const planSetup = async (
           chosen = { value: newSecret(), slot: current ? otherSlot(current) : 'A' }
           decided.set(group[0], chosen)
           for (const { remote: where, name } of already) {
+            // This one is written below, as what was missing.
+            if (where === remote && name === variable) continue
             plan.writes.push(...intoSlot(where, name, chosen.slot, chosen.value))
             plan.notes.push({ remote: where, variable: name, source: `moved to a new value, to match ${variable}` })
           }

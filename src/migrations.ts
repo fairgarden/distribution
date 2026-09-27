@@ -71,7 +71,12 @@ export interface MigrationStatus {
 }
 
 const BREAKPOINT = '--> statement-breakpoint'
-const IDENTIFIER = /^[a-z_][a-z0-9_]*$/
+// Lower-case, so quoting it names the same table an unquoted one did; and no
+// longer than PostgreSQL keeps, which would silently cut it short.
+const IDENTIFIER = /^[a-z_][a-z0-9_]{0,62}$/
+
+/** Quoted, so a name that is also a keyword — `user`, `order` — is still a name. */
+const quoted = (table: string): string => `"${table}"`
 
 /**
  * The migrations a package declares, or undefined when it declares none.
@@ -96,7 +101,9 @@ export const declaredMigrations = (root: string): Migrations | undefined => {
     new Error(`${name} declares its migrations in package.json, but ${what}.`)
   if (typeof directory !== 'string') throw wrong('not their "directory"')
   // Written into SQL, so only a plain identifier will do.
-  if (typeof table !== 'string' || !IDENTIFIER.test(table)) throw wrong('"table" is not a plain lower-case name')
+  if (typeof table !== 'string' || !IDENTIFIER.test(table)) {
+    throw wrong('"table" is not a plain lower-case name of at most 63 characters')
+  }
   if (typeof lock !== 'number' || !Number.isSafeInteger(lock)) throw wrong('"lock" is not an integer')
   if (!Array.isArray(database) || database.length === 0 || !database.every((each) => typeof each === 'string')) {
     throw wrong('"database" does not name the variables its database URL is in')
@@ -218,7 +225,7 @@ const withLock = async <T>(
     try {
       if (writes) {
         await client.query(`
-          create table if not exists ${table} (
+          create table if not exists ${quoted(table)} (
             tag text primary key,
             hash text not null,
             applied_at timestamptz not null default now()
@@ -236,9 +243,9 @@ const withLock = async <T>(
 
 const readApplied = async (client: MigrationClient, table: string): Promise<Map<string, AppliedRow>> => {
   // No journal yet: nothing has run.
-  const { rows: found } = await client.query('select to_regclass($1) is not null as exists', [table])
+  const { rows: found } = await client.query('select to_regclass($1) is not null as exists', [quoted(table)])
   if (!found[0]?.exists) return new Map()
-  const { rows } = await client.query(`select tag, hash, applied_at from ${table}`)
+  const { rows } = await client.query(`select tag, hash, applied_at from ${quoted(table)}`)
   return new Map((rows as AppliedRow[]).map((row) => [row.tag, row]))
 }
 
@@ -315,7 +322,7 @@ export const migrate = (pool: MigrationPool, directory: string, journal: Journal
     for (const migration of migrations.filter((migration) => !applied.has(migration.tag))) {
       await inTransaction(client, async () => {
         for (const statement of migration.up) await client.query(statement)
-        await client.query(`insert into ${journal.table} (tag, hash) values ($1, $2)`, [
+        await client.query(`insert into ${quoted(journal.table)} (tag, hash) values ($1, $2)`, [
           migration.tag,
           migration.hash,
         ])
@@ -372,7 +379,7 @@ export const rollback = (
     for (const migration of targets) {
       await inTransaction(client, async () => {
         for (const statement of migration.down!) await client.query(statement)
-        await client.query(`delete from ${journal.table} where tag = $1`, [migration.tag])
+        await client.query(`delete from ${quoted(journal.table)} where tag = $1`, [migration.tag])
       })
     }
     return targets.map((migration) => migration.tag)

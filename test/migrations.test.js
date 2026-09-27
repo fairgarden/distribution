@@ -164,6 +164,14 @@ describe('the migrator', () => {
     assert.deepEqual(await tables(database, 'b\\_'), ['b_a', 'b_migrations'])
   })
 
+  test('keeps its journal under a name that is also a keyword', async () => {
+    const journal = { table: 'user', lock: 49 }
+    const directory = folder([{ tag: '0000_k', up: 'create table k_things (id int);', down: 'drop table k_things;' }])
+    assert.deepEqual(await migrate(database.pool, directory, journal), ['0000_k'])
+    assert.deepEqual((await status(database.pool, directory, journal)).map((row) => row.state), ['applied'])
+    assert.deepEqual(await rollback(database.pool, directory, journal), ['0000_k'])
+  })
+
   test('takes no table name it would have to quote', async () => {
     await assert.rejects(
       migrate(database.pool, folder([]), { table: 'x; drop table t_migrations', lock: 1 }),
@@ -204,6 +212,15 @@ describe('what an app declares', () => {
       lock: 7031000001,
       database: ['ACME_ID_DATABASE_URL', 'DATABASE_URL'],
     })
+  })
+
+  test('refuses a journal name PostgreSQL would cut short', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'declared-'))
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: '@acme/id', fairgarden: { migrations: { directory: 'drizzle', table: 'a'.repeat(64), lock: 1, database: ['X'] } } })
+    )
+    assert.throws(() => declaredMigrations(root), /at most 63 characters/)
   })
 
   test('says what is wrong with a declaration', () => {
