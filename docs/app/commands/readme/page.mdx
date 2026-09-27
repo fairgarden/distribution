@@ -57,7 +57,7 @@ Version **1.2.0**
 ```
 
 At the end, the same readme gets the module's release flow — the *Publish*
-workflow, how it holds pull requests, `pnpm release`, where a fix to an older
+workflow, how it holds pull requests, `pnpm next-version`, where a fix to an older
 minor goes — with that module's own version and branch names filled in. The
 words are the same in every module, so "how do I release this" is answered
 where someone is already standing, and it is last because most people reading a
@@ -65,8 +65,8 @@ readme are there to use the module, not to release it.
 
 The distribution's readme ends the same way, with how a distribution is
 released: its calendar versions, the *Publish* workflow and the hold, and
-`pnpm release` moving it on. That section states no version, so the only line
-`release` has to rewrite in a distribution's readme is the one at the top —
+`pnpm next-version` moving it on. That section states no version, so the only line
+`next-version` has to rewrite in a distribution's readme is the one at the top —
 which it does, without reading or touching the modules.
 
 The version block is only positioned when it is first inserted, under the first
@@ -98,7 +98,7 @@ flow its own: bump the version, run `pnpm dist readme`, tag, publish. The
 distribution finds out when someone [bumps](/commands/bump) the submodule, which
 may be much later or never.
 
-[`release`](/commands/release) runs this on both branches it creates, so this is
+[`next-version`](/commands/next-version) runs this on both branches it creates, so this is
 usually only run by hand between releases.
 
 ```bash
@@ -136,7 +136,7 @@ The commands that move a pin — [`bump`](/commands/bump), [`fork`](/commands/fo
 [`contribute`](/commands/contribute), [`unfork`](/commands/unfork),
 [`inherit`](/commands/inherit), [`add-module`](/commands/add-module),
 [`extract`](/commands/extract) — rewrite the distribution's readme as they go,
-and [`release`](/commands/release) its version. Only the distribution's: writing
+and [`next-version`](/commands/next-version) its version. Only the distribution's: writing
 into a module's readme would leave that submodule dirty, and `bump` refuses to
 move a dirty one. Run `pnpm dist readme` for the modules' own.
 

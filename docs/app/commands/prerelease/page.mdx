@@ -22,7 +22,7 @@ So the major gets a branch, and both go on at once. Main keeps releasing what it
 was releasing, and `v2` publishes under a dist tag of its own until it is ready
 to be `latest`.
 
-This is the opposite of [`release`](/commands/release), which is about main
+This is the opposite of [`next-version`](/commands/next-version), which is about main
 *leaving* a line. Nothing here touches main, and there is no pull request —
 this is not a change to the branch you are on, it is a second line starting
 beside it.
@@ -36,10 +36,10 @@ beside it.
 
 The branch is named for the line it will become, not for the prerelease it
 starts as. If `2.0.0` ships from `v2`, that is already where its fixes go — the
-same name [`release`](/commands/release) would have given it.
+same name [`next-version`](/commands/next-version) would have given it.
 
 `--id` picks the identifier: `--id rc` gives `2.0.0-rc.0`. Moving from one to
-the next is [`release --id`](/commands/release), on the branch.
+the next is [`next-version --id`](/commands/next-version), on the branch.
 
 ## Releasing from it
 
@@ -61,5 +61,5 @@ yours rather than a command's.
 
 - **Uncommitted changes** — the branch is cut from what is committed.
 - **Branching from a prerelease** — `2.0.0-alpha.0` is already a line that has
-  been started. Move it along with [`release`](/commands/release).
+  been started. Move it along with [`next-version`](/commands/next-version).
 - **A branch that already exists** — that line is under way; check it out.

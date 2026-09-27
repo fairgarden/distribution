@@ -52,12 +52,12 @@ See [Forking a module](/overview/forking).
 - [`workflows`](/commands/workflows) — give every module a publishing workflow, a changelog check and `verify`
 - [`changelog`](/commands/changelog) — check a pull request has its line; print a version's notes
 - [`canary`](/commands/canary) — stamp a canary version, for CI
-- [`release`](/commands/release) — open the next version on main, and a maintenance branch behind it
+- [`next-version`](/commands/next-version) — after a release, start the next development cycle and decide its version
 - [`prerelease`](/commands/prerelease) — start the next line on a branch, leaving main where it is
 
 A module releases on its own schedule; see
 [Releasing a module](/overview/releasing). A distribution others extend
-publishes too — `workflows --distribution`, then `release` moves its version on;
+publishes too — `workflows --distribution`, and `next-version` starts each next version;
 see [Extending](/overview/extending#publishing-a-distribution).
 
 ## Shared options

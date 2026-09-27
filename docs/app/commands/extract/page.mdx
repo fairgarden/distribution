@@ -48,7 +48,7 @@ Then commit the new submodule pointer.
 The initial commit is tagged `v<version>` from the manifest, so
 [`sync`](/commands/sync) has something to track. That tag is also the one the
 module's first release would have created, so
-[`release --check`](/commands/release) refuses that version — it will not
+[`release --check`](/commands/next-version) refuses that version — it will not
 publish something it cannot then tag.
 
 Release the *next* version rather than the one it was extracted at, or pass

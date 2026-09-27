@@ -31,7 +31,7 @@
     "lint": "eslint",
     "test": "node --test test/*.test.js",
     "canary": "node dist/cli.js canary",
-    "release": "node dist/cli.js release",
+    "next-version": "node dist/cli.js next-version",
     "release:check": "node dist/cli.js release --check",
     "changelog": "node dist/cli.js changelog",
     "dist": "node dist/cli.js"

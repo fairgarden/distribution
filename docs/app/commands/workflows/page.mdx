@@ -61,7 +61,7 @@ something calls `fg-dist`, through a named script:
   "scripts": {
     "dist": "fg-dist",
     "canary": "fg-dist canary",
-    "release": "fg-dist release",
+    "next-version": "fg-dist next-version",
     "release:check": "fg-dist release --check",
     "changelog": "fg-dist changelog"
   }
@@ -69,7 +69,7 @@ something calls `fg-dist`, through a named script:
 ```
 
 So the workflow is byte-for-byte the same in every module — only the package
-name it publishes differs — and `pnpm release` is the answer to "how do I
+name it publishes differs — and `pnpm next-version` is the answer to "how do I
 release this" wherever you happen to be standing. A script the module already
 defines is left alone; it may call the tool differently on purpose.
 
@@ -122,7 +122,7 @@ version that is already in `package.json` — it does not bump anything.
 
 `release:check` refuses if that version is already on npm, which is the common
 mistake: main is meant to carry the next unreleased version, so a release that
-finds its own version published means [`pnpm release`](/commands/release) has
+finds its own version published means [`pnpm next-version`](/commands/next-version) has
 not run yet.
 
 It runs in the `npm-publish` environment, so a review or a wait can be attached
@@ -136,14 +136,14 @@ rest are on tags with a note to pin them once Renovate is watching the
 repository — a pin nobody updates is worse than a tag.
 
 See [Releasing a module](/overview/releasing) for what the versions mean, and
-[`release`](/commands/release) for what happens after a release ships.
+[`next-version`](/commands/next-version) for what happens after a release ships.
 
 ## Holding pull requests
 
 Once it has published and tagged, the release job holds every open pull request
 into the branch it released: [`changelog hold`](/commands/changelog#hold) runs
 each one's changelog check again, which finds the version the branch is at
-released and refuses it. [`pnpm release`](/commands/release) opens the pull
+released and refuses it. [`pnpm next-version`](/commands/next-version) opens the pull
 request that starts the next version; merging it lets the others through, once
 each has caught up with it. The job needs nothing but its own token — `actions:
 write` to run the checks again — and never pushes to main.
@@ -155,6 +155,6 @@ For the hold to stop anything merging, main's branch rules need:
   pull request runs the check against main's next version before it merges.
 
 A distribution's release job does the same. Its version is not moved for it
-either: when a month has turned before the next release, `pnpm release`
+either: when a month has turned before the next release, `pnpm next-version`
 dates it — in a pull request, like any other — and the publish check refuses a
 release of a month that is over until then.

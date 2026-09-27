@@ -12,7 +12,7 @@ import { isDistribution } from './submodules.ts'
  * carries — the next to be released — and every pull request adds a line to
  * it that links the pull request, which CI checks before it can merge. When
  * the version is published its notes are written already, and committed: the
- * release takes them as they are, and `release` opens the next section.
+ * release takes them as they are, and `next-version` opens the next section.
  *
  * A distribution's changelog is mostly written for it. fg-dist notes each
  * module it bumps, with a link to that release's notes, and each module it
@@ -123,7 +123,7 @@ const readVersion = (root: string): string | undefined => {
 
 /**
  * Open the section for the version a repository now carries, when it keeps a
- * changelog: what `release` does as it moves main on.
+ * changelog: what `next-version` does as it moves main on.
  */
 export const openSection = async (root: string, version = readVersion(root)): Promise<boolean> => {
   const file = path.join(root, CHANGELOG)
@@ -224,8 +224,8 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
   const url = `${server}/${repository}/pull/${pullRequest}`
 
   // Nothing merges between a release and the start of the next cycle: its
-  // lines would go under a version already out. The release moves main on
-  // straight after publishing, and this runs again once the branch has that.
+  // lines would go under a version already out. `next-version` moves main on
+  // after publishing, and this runs again once the branch has that.
   const carried = readVersion(root)
   if (carried && attempt(root, ['rev-parse', '--verify', '--quiet', `refs/tags/v${carried}`]) !== undefined) {
     return {
@@ -233,7 +233,7 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
       required: true,
       message:
         `This branch is at ${carried}, which is released. Bring it up to date with its base — ` +
-        'the release starts the next version there — and this runs again.',
+        '`pnpm next-version` starts the next version there — and this runs again.',
     }
   }
 

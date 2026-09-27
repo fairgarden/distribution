@@ -70,7 +70,8 @@ publishes itself:
 
 ```bash
 pnpm dist workflows --distribution   # once: the publish workflow, and public on npm
-pnpm release                    # the version it publishes next, then run the workflow
+# run the workflow to publish; after each release:
+pnpm next-version                    # start the next development cycle, and its version
 ```
 
 What it publishes is its manifest — recording each module's version, place,

@@ -252,7 +252,7 @@ test('every command is `pnpm dist <command>`, and a distribution has what its ch
   const root = await scaffold(distributionRepo('@acme/core'))
   const { scripts } = readJson(root, 'package.json')
   // What its changelog and verify workflows run, and what its readme says to.
-  for (const name of ['changelog', 'release']) assert.ok(scripts[name], name)
+  for (const name of ['changelog', 'next-version']) assert.ok(scripts[name], name)
   assert.match(readFileSync(path.join(root, '.github/workflows/verify.yml'), 'utf8'), /pnpm run dist verify/)
   assert.doesNotMatch(readFileSync(path.join(root, 'Readme.md'), 'utf8'), /date-based/)
 })

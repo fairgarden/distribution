@@ -163,7 +163,7 @@ export const planPrerelease = (
   }
   if (parsed.prerelease.length > 0) {
     throw new ReleaseError(
-      `${current} is already a prerelease. Move it along with \`pnpm release\` instead.`
+      `${current} is already a prerelease. Move it along with \`pnpm next-version\` instead.`
     )
   }
 
@@ -250,7 +250,7 @@ const writeVersion = async (root: string, version: string): Promise<void> => {
 const assertModule = (root: string): void => {
   if (isDistribution(root)) {
     throw new ReleaseError(
-      'This is a distribution, not a module. Its version is YY.MM.NN, which `pnpm release` ' +
+      'This is a distribution, not a module. Its version is YY.MM.NN, which `pnpm next-version` ' +
         'moves on; release its modules individually, then `pnpm dist bump` to take them.'
     )
   }
@@ -613,7 +613,7 @@ export const checkReleasable = async (
       throw new ReleaseError(
         `${manifest.version} is a release of a month that is over, and it is ` +
           `${String(year).padStart(2, '0')}.${String(month).padStart(2, '0')} now. ` +
-          "Run `pnpm release`, which moves it to this month's first release, and commit it."
+          "Run `pnpm next-version`, which moves it to this month's first release, and commit it."
       )
     }
   }
@@ -639,7 +639,7 @@ export const checkReleasable = async (
       `${name}@${version} is already on npm, and ${tag} does not exist here.\n` +
         'If the release job failed after publishing, only the tag is missing:\n' +
         `    git tag ${tag} <the published commit> && git push origin ${tag}\n` +
-        'Otherwise run `pnpm release` to move on to the next version.'
+        'Otherwise run `pnpm next-version` to start the next version.'
     )
   }
 
@@ -722,7 +722,7 @@ export const startPrerelease = async (
   if (branchExists(root, plan.branch)) {
     throw new ReleaseError(
       `Branch \`${plan.branch}\` already exists. That line has been started; ` +
-        'check it out and use `pnpm release` to move it along.'
+        'check it out and use `pnpm next-version` to move it along.'
     )
   }
 
