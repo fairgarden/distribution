@@ -240,6 +240,11 @@ describe('what an app declares', () => {
       JSON.stringify({ name: '@acme/id', fairgarden: { migrations: { directory: 'drizzle', table: 'Id-Migrations', lock: 1, database: ['X'] } } })
     )
     assert.throws(() => declaredMigrations(root), /"table" is not a plain lower-case name/)
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: '@acme/id', fairgarden: { migrations: { directory: 'drizzle', table: 'id_migrations', lock: 1, database: ['DATABASE-URL'] } } })
+    )
+    assert.throws(() => declaredMigrations(root), /"database" does not name the variables/)
   })
 })
 

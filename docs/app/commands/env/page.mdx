@@ -19,7 +19,8 @@ every app, which has every app's variables — and the monolith's own, if it
 declares any. Without one, each app is a project of its own, and each project
 has its own. A value two apps have to share — the secret one signs in to the
 other with — is set alike in both, when one says so with `sameAs`. Two projects
-that name a secret alike, untied, each have their own.
+that name a secret alike, untied, each have their own; a name `sameAs` ties has
+to be declared for one project only.
 
 Two apps in one deployment may declare the same variable, alike in how it is
 set. It is needed while any of them needs it: its `unless` excuses it only when

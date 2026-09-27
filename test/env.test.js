@@ -7,7 +7,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { deploymentAt, distributionDeployments, envApp, missing, requirementsFor } from '../dist/env.js'
-import { assertTies, planCatchUp, planRotation, remotesOf } from '../dist/env-vercel.js'
+import { assertTies, planCatchUp, planRotation, planSetup, remotesOf } from '../dist/env-vercel.js'
 import { secretValues } from '../dist/secrets.js'
 import { rotationWorkflow } from '../dist/workflows.js'
 
@@ -776,6 +776,29 @@ describe('rotating', () => {
     assert.equal(readFileSync(file, 'utf8'), 'changed by hand\n')
     await fgDist(root, ['env', 'workflow', '--force'])
     assert.equal(readFileSync(file, 'utf8'), written)
+  })
+
+  test('keeps a secret set by hand while a slot beside it has nothing pointing at it', async () => {
+    const root = distribution({ monolith: true })
+    // as a setup that stopped between the slot and its pointer leaves it, beside the value in use
+    const set = (value, updatedAt) => ({ production: { value, sensitive: true, updatedAt } })
+    const vercel = fakeVercel({ 'acme-core': { ACME_MEMBERS_SECRET: set('by-hand', 0), ACME_MEMBERS_SECRET_A: set('stranded', 1) } })
+    await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.ok(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').includes('by-hand'))
+    await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET'), undefined)
+  })
+
+  test('will not tie a name two projects declare, to either', async () => {
+    const x = app('@acme/x', { SESSION: secret })
+    const y = app('@acme/y', { SESSION: { ...secret, sameAs: 'KEY' }, KEY: { ...secret, verifies: true } })
+    const remotes = [
+      remote('x', x, { SESSION_A: variable(undefined), SESSION_CURRENT: variable('A') }),
+      remote('y', y, { SESSION_A: variable(undefined), SESSION_CURRENT: variable('A') }),
+    ]
+    const ambiguous = /SESSION is tied to KEY, and x and y both declare it/
+    assert.throws(() => planRotation(remotes), ambiguous)
+    await assert.rejects(planSetup(remotes, 'production'), ambiguous)
   })
 
   test('asks first, and without anyone to ask, does nothing', async () => {

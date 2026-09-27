@@ -75,6 +75,9 @@ const BREAKPOINT = '--> statement-breakpoint'
 // longer than PostgreSQL keeps, which would silently cut it short.
 const IDENTIFIER = /^[a-z_][a-z0-9_]{0,62}$/
 
+/** An environment variable's name, as an app declares one. */
+export const VARIABLE = /^[A-Z_][A-Z0-9_]*$/
+
 /** Quoted, so a name that is also a keyword — `user`, `order` — is still a name. */
 const quoted = (table: string): string => `"${table}"`
 
@@ -105,7 +108,11 @@ export const declaredMigrations = (root: string): Migrations | undefined => {
     throw wrong('"table" is not a plain lower-case name of at most 63 characters')
   }
   if (typeof lock !== 'number' || !Number.isSafeInteger(lock)) throw wrong('"lock" is not an integer')
-  if (!Array.isArray(database) || database.length === 0 || !database.every((each) => typeof each === 'string')) {
+  if (
+    !Array.isArray(database) ||
+    database.length === 0 ||
+    !database.every((each) => typeof each === 'string' && VARIABLE.test(each))
+  ) {
     throw wrong('"database" does not name the variables its database URL is in')
   }
   return { name, root, directory: path.resolve(root, directory), table, lock, database }

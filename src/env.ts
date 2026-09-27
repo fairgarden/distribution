@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { declaredMigrations, type Migrations } from './migrations.ts'
+import { declaredMigrations, VARIABLE, type Migrations } from './migrations.ts'
 import { pointerVariable, SLOTS, slotVariable } from './secrets.ts'
 import { composesApps, packageDir } from './packages.ts'
 import { submodules, uninitialised } from './submodules.ts'
@@ -83,7 +83,6 @@ export interface Requirement {
   declaration: EnvDeclaration
 }
 
-const VARIABLE = /^[A-Z_][A-Z0-9_]*$/
 const PACKAGE = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/
 
 const is = (what: string, test: (value: unknown) => boolean) => ({ what, test })

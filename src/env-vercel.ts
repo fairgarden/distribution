@@ -121,6 +121,32 @@ export const assertTies = (apps: EnvApp[]): void => {
   }
 }
 
+/**
+ * The groups `sameAs` ties, for these projects. A group is of names, so each
+ * of its names has to be one project's: were two projects to declare one, the
+ * tie would take in both, and hand one project's secret to the other.
+ */
+const tiesIn = (remotes: Remote[]): Map<string, string[]> => {
+  const apps = everyApp(remotes)
+  assertTies(apps)
+  const groups = groupsOf(apps)
+  for (const [name, group] of groups) {
+    if (group.length < 2) continue
+    const projects = remotes.filter((remote) => {
+      const here = new Set(remote.deployment.apps.map((app) => app.name))
+      return apps.some((app) => app.env[name] && here.has(app.env[name].deployment ?? app.name))
+    })
+    if (projects.length > 1) {
+      throw new Error(
+        `${name} is tied to ${group.filter((tied) => tied !== name).join(', ')}, and ` +
+          `${projects.map((remote) => remote.target.project).join(' and ')} both declare it, so which of them the ` +
+          'tie is for cannot be told. Give the variable a name of its own in each.'
+      )
+    }
+  }
+  return groups
+}
+
 interface Member {
   remote: Remote
   name: string
@@ -293,8 +319,7 @@ export const planSetup = async (
   environment: string,
   { ask }: { ask?: (requirement: Requirement, remote: Remote) => Promise<string | undefined> } = {}
 ): Promise<SetupPlan> => {
-  assertTies(everyApp(remotes))
-  const groups = groupsOf(everyApp(remotes))
+  const groups = tiesIn(remotes)
   const rotated = rotatedOf(everyApp(remotes))
   const decided = new Map<string, { value: string; slot: Slot }>()
   const plan: SetupPlan = { writes: [], notes: [], unresolved: [] }
@@ -430,7 +455,7 @@ export const planCatchUp = (
   live: Map<Remote, LiveDeployment | undefined>,
   only: string[] = []
 ): CatchUp[] => {
-  const groups = groupsOf(everyApp(remotes))
+  const groups = tiesIn(remotes)
   const behind = rotatedIn(remotes).filter(({ remote, name }) => {
     const deployed = live.get(remote)
     if (only.length > 0 && !(groups.get(name) ?? [name]).some((tied) => only.includes(tied))) return false
@@ -484,10 +509,8 @@ export const applyCatchUp = (behind: CatchUp[], { onProgress }: { onProgress?: (
  * group ties together moves to the same slot, with the same value.
  */
 export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[][] => {
-  const apps = everyApp(remotes)
-  assertTies(apps)
-  const groups = groupsOf(apps)
-  const rotated = rotatedOf(apps)
+  const groups = tiesIn(remotes)
+  const rotated = rotatedOf(everyApp(remotes))
   // Naming a secret that is not one would rotate nothing, and say it had.
   const unknown = only.filter((name) => !rotated.has(name))
   if (unknown.length > 0) {
@@ -513,8 +536,10 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
   for (const { remote, name, verifies } of found) {
     const { value, slot } = chosen.get(shareKey(groups, remote, name))!
     // Set by hand before the slots, it was kept alongside them for one
-    // rotation; this is the next.
-    const removes = currentSlot(remote.existing, name) && remote.existing.has(name) ? [name] : []
+    // rotation; this is the next. Only once something points at a slot: one
+    // that stopped short of its pointer is no rotation, and the value by hand
+    // is still the one in use.
+    const removes = remote.existing.has(pointerVariable(name)) && remote.existing.has(name) ? [name] : []
     const alone = groupOf(name).length === 1
     // What checks a shared secret goes first; every other side of it after.
     phases[alone || verifies ? 0 : 1].push({ remote, variable: name, writes: intoSlot(remote, name, slot, value), removes, alone })
