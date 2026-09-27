@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.1.0-alpha.7
+
 ## 0.1.0-alpha.6
 
 - `next-version` starts the next development cycle after a release, and asks what its version is. It was `release`, which still works and says so; `workflows` renames a module's script ([#6](https://github.com/fairgarden/distribution/pull/6))
