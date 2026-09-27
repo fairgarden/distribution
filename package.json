@@ -20,7 +20,7 @@
     }
   },
   "bin": {
-    "fg-dist": "./dist/cli.js"
+    "fg-dist": "dist/cli.js"
   },
   "files": [
     "dist"

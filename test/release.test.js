@@ -698,3 +698,16 @@ test('a module on an older fg-dist is moved up to the one whose workflows it get
   const own = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
   assert.equal(range, `^${own}`)
 })
+
+test('the publish workflows leave npm to trusted publishing', async () => {
+  const { publishWorkflow, distributionWorkflow } = await import('../dist/workflows.js')
+  const prepare = publishWorkflow('@acme/widget')['.github/actions/publish-prepare/action.yml']
+  const distribution = distributionWorkflow('@acme/core')['.github/workflows/publish.yml']
+  for (const workflow of [prepare, distribution]) {
+    // A registry-url has setup-node put a placeholder token where npm finds it,
+    // and the publish fails with E404 instead of exchanging the OIDC token.
+    assert.doesNotMatch(workflow, /^\s+registry-url:/m)
+    // Trusted publishing needs npm 11.5.1 or later.
+    assert.match(workflow, /npm install -g npm@\^11\.5\.1/)
+  }
+})

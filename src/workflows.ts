@@ -179,7 +179,18 @@ runs:
         node-version: 22
         # No \`cache: pnpm\`: it needs a lockfile to hash, and a module developed
         # inside a distribution keeps its lockfile in the distribution.
-        registry-url: https://registry.npmjs.org
+        #
+        # No \`registry-url\` either. Given one, setup-node writes an .npmrc
+        # with \`_authToken=\${NODE_AUTH_TOKEN}\` and, with no token to put
+        # there, exports a placeholder. npm then publishes with that instead of
+        # exchanging the Actions OIDC token, and the registry answers
+        # \`E404 Not Found - PUT\`. Trusted publishing needs npm to find no
+        # credentials at all; npmjs.org is the default registry anyway.
+
+    # Trusted publishing needs npm 11.5.1 or later, which Node 22 does not ship.
+    - name: Update npm
+      shell: bash
+      run: npm install -g npm@^11.5.1
 
     - name: Install
       shell: bash
@@ -214,10 +225,14 @@ const distributionSetup = (fetchDepth: boolean): string => `      - name: Checko
       # policy, not its apps.
       - uses: pnpm/action-setup@v4
 
+      # No \`registry-url\`, and npm new enough for trusted publishing: see
+      # .github/actions/publish-prepare in any module for why.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
 
       - name: Install
         run: pnpm install --frozen-lockfile
