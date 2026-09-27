@@ -1,11 +1,33 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { addModule } from './add-module.ts'
 import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
 import { verify } from './verify.ts'
+import { inBuild, loadEnvFiles, migrationTargets, runMigrations, type MigrateAction } from './migrate.ts'
+import {
+  deploymentAt,
+  describeMissing,
+  distributionAround,
+  distributionDeployments,
+  missing,
+  requirementsFor,
+} from './env.ts'
+import {
+  applyCatchUp,
+  applyRotation,
+  applySetup,
+  missingRemotely,
+  planCatchUp,
+  planRotation,
+  planSetup,
+  remotesOf,
+} from './env-vercel.ts'
+import { productionDeployment } from './vercel.ts'
+import { writeRotationWorkflow } from './workflows.ts'
 import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
@@ -82,6 +104,11 @@ Commands:
   prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
   verify               Fail when a file fg-dist writes no longer says what is true (CI)
+  migrate [name...]    Migrate the databases of this app, or of every app this monolith ships
+  env check            Fail when a deployment lacks what its apps need (--build: this one, in its build)
+  env setup            Add what each deployment's Vercel project lacks: secrets generated, the rest asked
+  env rotate [var...]  Rotate the generated secrets with no downtime, and redeploy production
+  env workflow         Write the workflow that rotates them every month
   inherit              Add the modules the distribution this extends ships, and this does not
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version; a fork merges it
@@ -122,11 +149,18 @@ Options:
   --force              Overwrite workflows that are already there (workflows)
   --distribution       Publish the distribution itself, for others to extend (workflows)
   --no-push            Push nothing and open no pull request (next-version, fork, contribute, bump)
-  --to <ref>           Upstream tag, branch or commit to go back to (unfork)
+  --to <ref>           Upstream tag, branch or commit to go back to (unfork); roll back all after it (migrate)
   --base <branch>      Branch the pull request goes into (contribute); what it merges into (changelog check)
   --pr <number>        The pull request to check, outside GitHub Actions (changelog check)
   --repo <owner/name>  The repository its link names, outside GitHub Actions (changelog check)
   --out <file>         Where policy build writes the bundle (default: policies/dist/)
+  --build              As a build step: only where builds migrate, see the docs (migrate)
+  --status             What has run and what is pending, changing nothing (migrate)
+  --rollback           Roll back the latest migration, --steps N of them, or all after --to TAG (migrate)
+  --steps <n>          How many to roll back (migrate --rollback)
+  --environment <env>  Vercel environment: production (default) or preview (env)
+  --no-redeploy        Rotate without redeploying production (env rotate)
+  --yes                Rotate without asking first (env rotate)
 `
 
 interface Args {
@@ -159,6 +193,13 @@ interface Args {
   repo: string | undefined
   direct: boolean
   copyright: string | undefined
+  build: boolean
+  status: boolean
+  rollback: boolean
+  steps: number | undefined
+  environment: string | undefined
+  redeploy: boolean
+  yes: boolean
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -192,14 +233,43 @@ const parseArgs = (argv: string[]): Args => {
     repo: undefined,
     direct: false,
     copyright: undefined,
+    build: false,
+    status: false,
+    rollback: false,
+    steps: undefined,
+    environment: undefined,
+    redeploy: true,
+    yes: false,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
+    // What an option takes. Missing, it is refused: `--to` with nothing after
+    // it must not become a different rollback than the one asked for.
+    const value = (): string => {
+      const next = argv[index + 1]
+      if (next === undefined || next.startsWith('--')) throw new Error(`${arg} needs a value.`)
+      index += 1
+      return next
+    }
     if (arg === '--cwd') {
-      args.cwd = path.resolve(argv[++index] ?? '.')
+      args.cwd = path.resolve(value())
     } else if (arg === '--check') {
       args.check = true
+    } else if (arg === '--build') {
+      args.build = true
+    } else if (arg === '--environment') {
+      args.environment = value()
+    } else if (arg === '--no-redeploy') {
+      args.redeploy = false
+    } else if (arg === '--yes' || arg === '-y') {
+      args.yes = true
+    } else if (arg === '--status') {
+      args.status = true
+    } else if (arg === '--rollback') {
+      args.rollback = true
+    } else if (arg === '--steps') {
+      args.steps = Number(value())
     } else if (arg === '--major') {
       args.major = true
       args.bump = 'major'
@@ -208,21 +278,21 @@ const parseArgs = (argv: string[]): Args => {
     } else if (arg === '--patch') {
       args.bump = 'patch'
     } else if (arg === '--id') {
-      args.id = argv[++index]
+      args.id = value()
     } else if (arg === '--no-fetch') {
       args.fetch = false
     } else if (arg === '--dry-run') {
       args.dryRun = true
     } else if (arg === '--name') {
-      args.name = argv[++index]
+      args.name = value()
     } else if (arg === '--at') {
-      args.at = argv[++index]
+      args.at = value()
     } else if (arg === '--no-git') {
       args.git = false
     } else if (arg === '--url') {
-      args.url = argv[++index]
+      args.url = value()
     } else if (arg === '--extends') {
-      args.extends = argv[++index]
+      args.extends = value()
     } else if (arg === '--separate') {
       args.separate = true
     } else if (arg === '--ssh') {
@@ -236,13 +306,13 @@ const parseArgs = (argv: string[]): Args => {
     } else if (arg === '--no-push') {
       args.push = false
     } else if (arg === '--copyright') {
-      args.copyright = argv[++index]
+      args.copyright = value()
     } else if (arg === '--direct') {
       args.direct = true
     } else if (arg === '--next') {
       // How main moves on after a release, as the publish workflow is told:
       // carry on the prerelease, change its stage, or bump.
-      const next = argv[++index]
+      const next = value()
       if (next === 'prerelease') {
         // as it is
       } else if (next === 'alpha' || next === 'beta' || next === 'rc') {
@@ -255,19 +325,19 @@ const parseArgs = (argv: string[]): Args => {
         throw new Error(`--next is prerelease, alpha, beta, rc, patch, minor, major or stable; not ${next}.`)
       }
     } else if (arg === '--pr') {
-      args.pr = Number(argv[++index])
+      args.pr = Number(value())
     } else if (arg === '--repo') {
-      args.repo = argv[++index]
+      args.repo = value()
     } else if (arg === '--stable') {
       args.stable = true
     } else if (arg === '--distribution') {
       args.distribution = true
     } else if (arg === '--to') {
-      args.to = argv[++index]
+      args.to = value()
     } else if (arg === '--base') {
-      args.base = argv[++index]
+      args.base = value()
     } else if (arg === '--out') {
-      args.out = path.resolve(argv[++index] ?? '.')
+      args.out = path.resolve(value())
     } else if (!arg.startsWith('-')) {
       if (args.command) args.names.push(arg)
       else args.command = arg
@@ -1032,6 +1102,96 @@ const main = async (): Promise<number> => {
     return 0
   }
 
+  if (args.command === 'migrate') {
+    // Where the build runs, not the repository: a monolith is one package of many.
+    const root = args.cwd
+    if (!existsSync(path.join(root, 'package.json'))) {
+      throw new Error(`${root} has no package.json: run this where an app or a monolith is built.`)
+    }
+    if (args.status && args.rollback) throw new Error('--status or --rollback, not both.')
+    // A build only ever migrates: --build is not a way to roll back, or to
+    // look, with a build's permission to touch production.
+    if (args.build && (args.rollback || args.status)) {
+      throw new Error('--build migrates, and nothing else: roll back, or look, by hand.')
+    }
+    // How far to roll back means nothing without rolling back — and ignored,
+    // `--steps 2` would migrate forward instead.
+    if (!args.rollback && (args.steps !== undefined || args.to !== undefined)) {
+      throw new Error('--steps and --to say how far to roll back: they need --rollback.')
+    }
+    if (args.steps !== undefined && args.to !== undefined) throw new Error('--steps or --to, not both.')
+    if (args.steps !== undefined && !(Number.isInteger(args.steps) && args.steps > 0)) {
+      throw new Error('--steps is a whole number of migrations.')
+    }
+
+    // A build's environment, as Next's build reads it; by hand, the one being worked in.
+    const envFiles = loadEnvFiles(root, { dev: !args.build && process.env.NODE_ENV !== 'production' })
+    if (envFiles.length > 0) process.stdout.write(`Environment from ${envFiles.join(', ')}\n`)
+
+    if (args.build) {
+      const decision = inBuild(process.env)
+      if (!decision.migrate) {
+        process.stdout.write(`Not migrating: ${decision.reason}.\n`)
+        return 0
+      }
+      process.stdout.write(`Migrating: ${decision.reason}.\n`)
+    }
+
+    let targets = migrationTargets(root)
+    if (args.names.length > 0) {
+      const unknown = args.names.filter((name) => !targets.some((target) => target.name === name))
+      if (unknown.length > 0) {
+        throw new Error(
+          `Nothing here migrates ${unknown.join(', ')}. ` +
+            (targets.length > 0 ? `What does: ${targets.map((target) => target.name).join(', ')}.` : '')
+        )
+      }
+      targets = targets.filter((target) => args.names.includes(target.name))
+    }
+    if (targets.length === 0) {
+      process.stdout.write('Nothing here declares migrations.\n')
+      return 0
+    }
+    // Rolling back is one app's business: which one should not be a guess.
+    if (args.rollback && targets.length > 1) {
+      throw new Error(
+        `Name the app to roll back: ${targets.map((target) => target.name).join(', ')}.`
+      )
+    }
+
+    const action: MigrateAction = args.status
+      ? { kind: 'status' }
+      : args.rollback
+        ? { kind: 'rollback', steps: args.steps, to: args.to }
+        : { kind: 'migrate' }
+
+    const results = await runMigrations(targets, { action, build: args.build })
+    const width = pad(results.map((result) => result.target.name))
+    for (const { target, database, changed, status: rows, skipped } of results) {
+      const name = target.name.padEnd(width)
+      const where = database ? `  (${database.variable})` : ''
+      if (skipped) {
+        process.stdout.write(`${name}  skipped: ${skipped}\n`)
+      } else if (rows) {
+        process.stdout.write(`${name}${where}\n`)
+        for (const row of rows) {
+          const when = row.appliedAt ? row.appliedAt.toISOString() : ''
+          const down = row.reversible ? '' : ' (no down migration)'
+          process.stdout.write(`  ${row.state.padEnd(8)} ${row.tag}${down} ${when}`.trimEnd() + '\n')
+        }
+      } else if (action.kind === 'rollback') {
+        process.stdout.write(`${name}  ${changed.length ? `rolled back ${changed.join(', ')}` : 'nothing to roll back'}${where}\n`)
+      } else {
+        process.stdout.write(`${name}  ${changed.length ? `applied ${changed.join(', ')}` : 'up to date'}${where}\n`)
+      }
+    }
+    return 0
+  }
+
+  if (args.command === 'env') {
+    return envCommand(args)
+  }
+
   if (args.command === 'verify') {
     const root = repositoryRoot(args.cwd)
     if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
@@ -1546,6 +1706,188 @@ const main = async (): Promise<number> => {
 
   process.stderr.write(`Unknown command: ${args.command}\n\n${USAGE}`)
   return 1
+}
+
+/**
+ * A question on the terminal, or undefined where there is nobody to ask.
+ * With `hidden`, what is typed is not shown: a secret should not sit on the
+ * screen, or in a recording of it.
+ */
+const prompt = async (question: string, { hidden = false } = {}): Promise<string | undefined> => {
+  if (!process.stdin.isTTY) return undefined
+  const { createInterface } = await import('node:readline/promises')
+  const { Writable } = await import('node:stream')
+  let muted = false
+  const output = new Writable({
+    write(chunk, encoding, done) {
+      if (!muted) process.stderr.write(chunk, encoding)
+      done()
+    },
+  })
+  const readline = createInterface({ input: process.stdin, output, terminal: true })
+  try {
+    const answer = readline.question(question)
+    muted = hidden
+    return (await answer).trim() || undefined
+  } finally {
+    if (hidden) process.stderr.write('\n')
+    readline.close()
+  }
+}
+
+const envCommand = async (args: Args): Promise<number> => {
+  const [action = 'check', ...variables] = args.names
+  const environment = args.environment ?? 'production'
+  if (!['production', 'preview'].includes(environment)) {
+    throw new Error(`--environment is production or preview, not ${environment}.`)
+  }
+
+  // The build's own check: what this deployment is about to run with.
+  if (action === 'check' && args.build) {
+    const gate = process.env.FG_ENV_CHECK
+    if (gate === 'skip') {
+      process.stdout.write('Not checking the environment: FG_ENV_CHECK is skip.\n')
+      return 0
+    }
+    if (!process.env.VERCEL && gate !== 'build') {
+      process.stdout.write('Not checking the environment: this is not a Vercel build; FG_ENV_CHECK=build checks here.\n')
+      return 0
+    }
+    const building = process.env.VERCEL_ENV ?? environment
+    if (building !== 'production' && building !== 'preview') {
+      process.stdout.write(`Not checking the environment: a ${building} build deploys nothing.\n`)
+      return 0
+    }
+    loadEnvFiles(args.cwd, { dev: false })
+    const deployment = deploymentAt(args.cwd)
+    const distribution = distributionAround(args.cwd)
+    const peers = distribution ? distributionDeployments(distribution).flatMap((each) => each.apps) : []
+    const absent = missing(requirementsFor(deployment, building, peers), process.env)
+    if (absent.length > 0) {
+      process.stderr.write(`${describeMissing(deployment, building, absent)}\n`)
+      return 1
+    }
+    process.stdout.write(`${deployment.name} has everything a ${building} deployment needs.\n`)
+    return 0
+  }
+
+  const distribution = distributionAround(args.cwd) ?? args.cwd
+
+  if (action === 'workflow') {
+    const written = await writeRotationWorkflow(distribution, { force: args.force, dryRun: args.dryRun })
+    if (!written) process.stdout.write('The rotation workflow is there already. Pass --force to overwrite it.\n')
+    else if (args.dryRun) process.stdout.write(`Dry run: would write ${written}.\n`)
+    else {
+      process.stdout.write(
+        `${written}: rotates the secrets on the 1st of every month, and on demand.\n` +
+          'It signs in to Vercel with VERCEL_TOKEN: add it to the repository\'s Actions secrets.\n'
+      )
+    }
+    return 0
+  }
+
+  const remotes = await remotesOf(distribution, environment, {
+    project: (at) => prompt(`Which Vercel project deploys ${at}? `),
+    save: !args.dryRun,
+  })
+
+  if (action === 'check') {
+    let failed = false
+    for (const { remote, absent } of missingRemotely(remotes, environment)) {
+      if (absent.length === 0) {
+        process.stdout.write(`${remote.target.project} (${remote.at}) has everything ${environment} needs.\n`)
+        continue
+      }
+      failed = true
+      process.stderr.write(`${describeMissing(remote.deployment, environment, absent)}\n\n`)
+    }
+    return failed ? 1 : 0
+  }
+
+  if (action === 'setup') {
+    const plan = await planSetup(remotes, environment, {
+      ask: (requirement, remote) =>
+        prompt(
+          `${requirement.variable} for ${remote.target.project} — ${requirement.declaration.description}` +
+            (requirement.declaration.example ? ` (e.g. ${requirement.declaration.example})` : '') +
+            (requirement.declaration.sensitive ? ' (not shown as you type)' : '') +
+            '\n  ',
+          { hidden: Boolean(requirement.declaration.sensitive) }
+        ),
+    })
+    const width = pad(plan.notes.map((each) => each.variable))
+    for (const { remote, variable, source } of plan.notes) {
+      process.stdout.write(`${remote.target.project}  ${variable.padEnd(width)}  ${source}\n`)
+    }
+    if (plan.writes.length === 0 && plan.unresolved.length === 0) {
+      process.stdout.write(`Every project has what ${environment} needs.\n`)
+      return 0
+    }
+    if (!args.dryRun && plan.writes.length > 0) {
+      applySetup(plan, environment)
+      process.stdout.write(
+        `Set ${plan.writes.length} variables in ${environment}, every secret sensitive. They apply from the next deployment.\n`
+      )
+    } else if (args.dryRun) {
+      process.stdout.write('Dry run: nothing set.\n')
+    }
+    for (const { remote, requirement, why } of plan.unresolved) {
+      process.stderr.write(`${remote.target.project}  ${requirement.variable}: ${why}.\n`)
+    }
+    return plan.unresolved.length > 0 ? 1 : 0
+  }
+
+  if (action === 'rotate') {
+    const phases = planRotation(remotes, variables)
+    if (phases.length === 0) {
+      process.stdout.write('Nothing to rotate: no rotated secret is set yet. `pnpm dist env setup` sets them.\n')
+      return 0
+    }
+    // A slot is chosen from the settings, so production has to be running them.
+    const behind =
+      environment === 'production'
+        ? planCatchUp(remotes, new Map(remotes.map((remote) => [remote, productionDeployment(remote.target)])), variables)
+        : []
+    if (behind.length > 0 && !args.redeploy) {
+      const projects = behind.map(({ remote }) => remote.target.project)
+      process.stderr.write(
+        `Production in ${projects.join(' and ')} was made before its secrets last changed, so it may still send a ` +
+          `value rotating would go over. Redeploy ${projects.length > 1 ? 'them, in that order,' : 'it'} first, or ` +
+          'rotate without --no-redeploy, which does.\n'
+      )
+      return 1
+    }
+    if (behind.length > 0) {
+      process.stdout.write('Production made before its secrets last changed, redeployed first:\n')
+      for (const { remote, secrets } of behind) process.stdout.write(`  ${remote.target.project}  ${secrets.join(', ')}\n`)
+      process.stdout.write('Then rotated:\n')
+    }
+    phases.forEach((phase, index) => {
+      if (phases.length > 1) process.stdout.write(`${index + 1}.\n`)
+      for (const { remote, variable } of phase) process.stdout.write(`  ${remote.target.project}  ${variable}\n`)
+    })
+    if (args.dryRun) {
+      process.stdout.write('Dry run: nothing rotated.\n')
+      return 0
+    }
+    const redeploying = environment === 'production' && args.redeploy
+    if (!args.yes) {
+      const answer = await prompt(`Rotate these${redeploying ? ', redeploying production after each step' : ''}? [y/N] `)
+      if (!/^y(es)?$/i.test(answer ?? '')) {
+        process.stdout.write(answer === undefined ? 'Pass --yes to rotate without being asked.\n' : 'Nothing rotated.\n')
+        return answer === undefined ? 1 : 0
+      }
+    }
+    applyCatchUp(behind, { onProgress: (line) => process.stdout.write(`${line}\n`) })
+    applyRotation(phases, environment, {
+      redeploy: args.redeploy,
+      onProgress: (line) => process.stdout.write(`${line}\n`),
+    })
+    if (!redeploying) process.stdout.write(`Rotated. They apply from the next ${environment} deployment.\n`)
+    return 0
+  }
+
+  throw new Error(`env takes check, setup, rotate or workflow, not ${action}.`)
 }
 
 main().then(

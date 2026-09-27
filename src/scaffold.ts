@@ -54,10 +54,19 @@ const rootScripts = (monolith: boolean): Record<string, string> => {
     ? "--filter='./apps/*' --filter='!./apps/monolith'"
     : "--filter='./apps/*'"
   const docs = "--filter='./apps/*/docs' --filter='./packages/*/docs'"
+  // A build migrates what it deploys once it has built — see `fg-dist
+  // migrate` — and outside turbo, which would keep from it every variable an
+  // app's database may be named by that turbo.json does not list, and could
+  // skip it on a cache hit.
+  const migrate = (filter: string) => `pnpm ${filter} run --if-present migrate`
+  // And before anything is built, it refuses to deploy without what the apps
+  // need in their environment: see `fg-dist env check`.
+  const checkEnv = (filter: string) => `pnpm ${filter} run --if-present check-env`
+  const deploy = (filter: string) => `${checkEnv(filter)} && turbo run build ${filter} && ${migrate(filter)}`
   return {
-    build: monolith ? 'turbo run build --filter=./apps/monolith' : `turbo run build ${apps}`,
+    build: deploy(monolith ? '--filter=./apps/monolith' : apps),
     dev: monolith ? 'turbo run dev --filter=./apps/monolith' : `turbo run dev ${apps}`,
-    'modular:build': `turbo run build ${apps}`,
+    'modular:build': deploy(apps),
     'modular:dev': `turbo run dev ${apps}`,
     'docs:build': `turbo run build ${docs}`,
     'docs:dev': `turbo run dev ${docs}`,
@@ -208,6 +217,10 @@ export const monolithRepo = (
       // Each takes a copy of the organization's policy to run, when there is one.
       dev: 'fg-dist policy use && next dev -p 3000',
       build: 'fg-dist policy use && next build',
+      // What every app it mounts needs set, before a build deploys it.
+      'check-env': 'fg-dist env check --build',
+      // Every app it mounts that has a database, each into its own.
+      migrate: 'fg-dist migrate --build',
       start: 'next start -p 3000',
       lint: 'eslint',
     },

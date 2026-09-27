@@ -36,6 +36,27 @@ This is the right shape once a distribution is too complex for one deployment,
 and no hardship for an audience already running deployment infrastructure. It is
 also what you want when scaling: splitting deployments is often the point.
 
+## Databases
+
+A build migrates the databases of what it deploys, after it has built it:
+[`migrate`](/commands/migrate) runs as a step after turbo's `build`. In a
+monolith that is every mounted app that declares migrations, each into the
+database it uses; deployed separately, each app migrates its own.
+
+Vercel production builds migrate. A preview build does only once it is given
+`FG_MIGRATE=build` — which is right when each preview has its own database, and
+wrong while they share production's. A Vercel rollback runs no build, so it
+undoes no migration: each has to work with the release before it too.
+
+## Environment
+
+A build first checks that the deployment has what its apps need — `fg-dist env
+check`, from what each app declares — and refuses to go on without it, naming
+every variable. [`pnpm dist env setup`](/commands/env) adds them through the
+Vercel CLI: one project for a monolith, one per app without one, with the
+secrets apps share set alike in each. `pnpm dist env rotate` rotates them with
+no downtime, and `pnpm dist env workflow` schedules it monthly.
+
 ## Which app composes the others
 
 The app that composes modules is identified by its Next config calling

@@ -464,6 +464,73 @@ ${checkSetup}
 `,
 })
 
+/**
+ * The workflow that rotates a distribution's generated secrets every month.
+ *
+ * Opt-in — `fg-dist env workflow` writes it — since it needs a Vercel token.
+ */
+export const rotationWorkflow = (): Files => ({
+  '.github/workflows/rotate-secrets.yml': `name: Rotate secrets
+
+# Rotates the secrets this distribution's apps generate — their session keys,
+# the client secrets they sign in to one another with — with no downtime:
+# each takes a new value and keeps the one before, which is still accepted
+# until the next rotation. Production is redeployed after each step, so a
+# secret one app checks is rotated before the one that sends it.
+#
+# Signs in to Vercel with VERCEL_TOKEN, an Actions secret. Rotating more often
+# than a session lasts would sign people out; monthly is well clear of it.
+
+on:
+  schedule:
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rotate-secrets
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    name: Rotate secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          submodules: true # the apps, whose package.json says what they need
+
+${checkSetup}
+
+      - name: Install the Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Rotate, and redeploy production
+        env:
+          VERCEL_TOKEN: \${{ secrets.VERCEL_TOKEN }}
+        run: pnpm run dist env rotate --yes
+`,
+})
+
+/** Write the rotation workflow, unless there is one. Returns where, when it wrote. */
+export const writeRotationWorkflow = async (
+  root: string,
+  { force = false, dryRun = false }: { force?: boolean; dryRun?: boolean } = {}
+): Promise<string | undefined> => {
+  const [[relative, contents]] = Object.entries(rotationWorkflow())
+  const full = path.join(root, relative)
+  if (existsSync(full) && !force) return undefined
+  if (!dryRun) {
+    await mkdir(path.dirname(full), { recursive: true })
+    await writeFile(full, contents)
+  }
+  return relative
+}
+
 export const changelogWorkflow = ({ submodules }: { submodules: boolean }): Files => ({
   '.github/workflows/changelog.yml': `name: Changelog
 

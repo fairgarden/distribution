@@ -219,7 +219,7 @@ test('a monolith repo runs the monolith, or each app on its own, and never the d
     const root = await scaffold(files)
     const { scripts } = readJson(root, 'package.json')
     assert.equal(scripts.dev, 'turbo run dev --filter=./apps/monolith')
-    assert.equal(scripts.build, 'turbo run build --filter=./apps/monolith')
+    assert.equal(scripts.build, 'pnpm --filter=./apps/monolith run --if-present check-env && turbo run build --filter=./apps/monolith && pnpm --filter=./apps/monolith run --if-present migrate')
     for (const name of ['modular:dev', 'modular:build']) {
       assert.match(scripts[name], /--filter='\.\/apps\/\*' --filter='!\.\/apps\/monolith'/)
     }
@@ -257,12 +257,24 @@ test('every command is `pnpm dist <command>`, and a distribution has what its ch
   assert.doesNotMatch(readFileSync(path.join(root, 'Readme.md'), 'utf8'), /date-based/)
 })
 
+test('a build migrates what it deploys after building it, outside turbo', async () => {
+  const root = await scaffold(distributionRepo('@acme/core'))
+  const { scripts } = readJson(root, 'package.json')
+  // turbo would keep from it any database variable turbo.json does not list,
+  // and a cache hit would skip it.
+  assert.equal(scripts.build, 'pnpm --filter=./apps/monolith run --if-present check-env && turbo run build --filter=./apps/monolith && pnpm --filter=./apps/monolith run --if-present migrate')
+  assert.match(scripts['modular:build'], /^pnpm .* run --if-present check-env && turbo run build .* && pnpm .* run --if-present migrate$/)
+  assert.equal(readJson(root, 'apps/monolith/package.json').scripts['check-env'], 'fg-dist env check --build')
+  assert.equal(readJson(root, 'turbo.json').tasks.migrate, undefined)
+  assert.equal(readJson(root, 'apps/monolith/package.json').scripts.migrate, 'fg-dist migrate --build')
+})
+
 test('a separate distribution runs every app, with no monolith to build for', async () => {
   const root = await scaffold(distributionRepo('@acme/core', undefined, undefined, { monolith: false }))
   const { scripts } = readJson(root, 'package.json')
   assert.equal(scripts.dev, "turbo run dev --filter='./apps/*'")
   assert.equal(scripts['modular:dev'], scripts.dev)
-  assert.equal(scripts.build, "turbo run build --filter='./apps/*'")
+  assert.equal(scripts.build, "pnpm --filter='./apps/*' run --if-present check-env && turbo run build --filter='./apps/*' && pnpm --filter='./apps/*' run --if-present migrate")
   assert.equal(readJson(root, 'turbo.json').tasks['build:libs'], undefined)
   for (const dir of ['apps', 'packages']) {
     assert.equal(readFileSync(path.join(root, dir, '.gitkeep'), 'utf8'), '')

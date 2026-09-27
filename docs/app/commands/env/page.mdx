@@ -1,0 +1,181 @@
+# `env`
+
+```bash
+pnpm dist env check [--build] [--environment production|preview]
+pnpm dist env setup [--environment production|preview] [--dry-run]
+pnpm dist env rotate [variable...] [--yes] [--no-redeploy] [--dry-run]
+pnpm dist env workflow
+```
+
+What a deployment needs in its environment, from what its apps declare: a
+build that refuses to deploy without it and says exactly what to add, a setup
+that adds it through the Vercel CLI, and a rotation of the secrets it
+generated, with no downtime.
+
+## Which deployments
+
+A distribution with `apps/monolith` deploys it: one Vercel project, serving
+every app, which has every app's variables — and the monolith's own, if it
+declares any. Without one, each app is a project of its own, and each project
+has its own. A value two apps have to share — the secret one signs in to the
+other with — is set alike in both, when one says so with `sameAs`. Two projects
+that name a secret alike, untied, each have their own; a name `sameAs` ties has
+to be declared for one project only. A variable set for several environments at
+once — the dashboard's default — is one record, which Vercel changes or removes
+for all of them, so rotating one environment refuses it: keep it for one, and
+let `setup` give each of the others its own.
+
+Two apps in one deployment may declare the same variable, alike in how it is
+set. It is needed while any of them needs it: its `unless` excuses it only when
+every app declaring it says so.
+
+Every app is read from its checkout, so each submodule has to be checked out
+(`git submodule update --init`); one that is not is an error, not an app that
+needs nothing.
+
+Which project deploys what is kept in the distribution's `package.json`, so a
+scheduled rotation in CI finds them without a `vercel link`. `setup` asks the
+first time, and writes it down:
+
+```json
+"distribution": {
+  "vercel": { "scope": "acme", "projects": { "apps/monolith": "acme-core" } }
+}
+```
+
+## In the build
+
+```bash
+pnpm dist env check --build
+```
+
+`fg-dist init` runs it first, before anything is built, so a deployment missing
+something fails in seconds rather than at its first request:
+
+```
+@acme/core-monolith is missing what a production deployment needs:
+
+  FG_ID_SMTP_URL  (@fairgarden/id)
+    The SMTP server sign-in codes are emailed through; without it, nobody can sign in by email.
+    For example smtps://user:password@smtp.example.com:465
+  FG_MEMBERS_SECRET  (@fairgarden/members)
+    Encrypts the session cookie.
+    A long random value: `pnpm dist env setup` makes one.
+
+Add them to the Vercel project for Production, or run
+`pnpm dist env setup` where the distribution is checked out, which adds them for you.
+```
+
+It checks on Vercel, for the environment being built — `production` or
+`preview` — and nowhere else, unless `FG_ENV_CHECK=build`; `FG_ENV_CHECK=skip`
+turns it off. It reads the environment files Next reads for a build, as
+[`migrate`](/commands/migrate) does.
+
+Without `--build`, it checks each deployment's Vercel project instead, through
+the CLI.
+
+## Setting it up
+
+```bash
+pnpm dist env setup
+```
+
+Adds what each project is missing, and nothing it has:
+
+- A secret an app generates is made here, 32 random bytes, and set alike in
+  every project that shares it. Every secret is sensitive: once set, only a
+  deployment can read it — not setup, not rotation, not anyone on the team.
+- Where one side of a shared secret is set already, its value cannot be read to
+  match. Both sides move to a new value in their next slot instead, and the
+  side that had one goes on accepting it.
+- A value the app fixes is set as it says.
+- Anything else is asked for, when there is someone to ask; otherwise it is
+  listed, and setup fails.
+- A database is not made here: connect Neon to the project, which sets
+  `DATABASE_URL`.
+
+`--environment preview` does the same for previews. Values go to the CLI on
+standard input, never as arguments any other process could read.
+
+## Rotating secrets
+
+```bash
+pnpm dist env rotate
+```
+
+A secret is never read back, so rotating cannot keep the old value by reading
+it. A rotated secret has two slots instead, `NAME_A` and `NAME_B`, both
+sensitive, and `NAME_CURRENT` — a letter, and no secret — says which is in use.
+The app signs and sends with that one and accepts both. Rotating writes a new
+value into the other slot, over the one from two rotations ago, then points at
+it. So a session sealed, or a sign-in begun, just before a rotation still works
+after it — until the next one.
+
+A secret two apps share is rotated where it is checked first, and redeployed,
+before what sends it: then there is no moment one side has a value the other
+does not. In a monolith both apps read the one variable, so one redeploy does.
+Production is redeployed after each step — the deployment serving it now, so an
+instant rollback is kept, not undone.
+
+Which slot is in use is read from the pointer; where a team policy makes every
+variable sensitive (Team Settings → Security & Privacy), even that, it is the
+slot set most recently, which Vercel says of any variable. A secret set by hand
+as plain `NAME` is still accepted beside the slots the first rotation starts,
+and the next one removes it. Name variables to rotate only those, and the ones
+tied to them; a name that is not a rotated secret is an error, not a rotation
+of nothing.
+
+A slot is chosen from each project's settings, which production runs only once
+it is redeployed. So rotating first redeploys any project whose production was
+made before one of its secrets last changed — a rotation that stopped before
+redeploying it, or an instant rollback to before one — where the secret is
+checked before where it is sent. Then the new value goes into the slot nothing
+live sends from. With `--no-redeploy` it refuses instead, and says which to
+redeploy first: deploy between rotations you run that way.
+
+A session sealed with a value lasts until the second rotation after it, so
+rotate less often than a session lasts, or people are signed out. Members'
+sessions last 12 hours; monthly is well clear of it.
+
+```bash
+pnpm dist env workflow
+```
+
+Writes `.github/workflows/rotate-secrets.yml`, which rotates on the 1st of every
+month and on demand. It signs in to Vercel with `VERCEL_TOKEN`, an Actions
+secret of the repository.
+
+## What an app declares
+
+Under `fairgarden.env` in its `package.json`:
+
+```json
+"FG_MEMBERS_SECRET": {
+  "description": "Encrypts the session cookie.",
+  "required": "deployed",
+  "generate": "secret",
+  "rotate": true
+}
+```
+
+| | |
+| --- | --- |
+| `description` | what it is for, shown to whoever has to set it |
+| `required` | `deployed` — any deployment — or `production` alone; otherwise optional |
+| `sensitive` | a secret nobody should read back; every generated one is too |
+| `generate` | `secret`: `setup` makes it, and `rotate` can replace it |
+| `rotate` | kept in two slots and a pointer, which the app reads with `@fairgarden/distribution/secrets` |
+| `value` | what it is set to; nothing to ask |
+| `example` | shown when it is asked for |
+| `unless` | not needed when any of these variables is set |
+| `unlessMounted` | not needed when the app shares a monolith with this package: it works it out |
+| `deployment` | the package whose deployment reads it, when that is not the app's own |
+| `sameAs` | the same value as this other rotated secret, which some app declares |
+| `verifies` | it checks a shared secret, so it is rotated first; every tied group has one |
+
+`deployment` is how an app says what another needs to know about it: members
+declares the variables the id service enrols it with, for the id service's
+project — unless they share a monolith, where the id service works them out.
+
+An app with [migrations](/commands/migrate) needs a database on any deployment,
+without declaring it.

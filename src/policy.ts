@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { packageDir } from './packages.ts'
 
 /**
  * A distribution's policy: the organization's rules for every service it
@@ -102,25 +103,6 @@ export const findPolicy = (from: string): DistributionPolicy | undefined => {
     if (isOrganizations(path.join(dir, POLICIES))) return describe(dir)
     if (path.dirname(dir) === dir) return undefined
   }
-}
-
-/** Where a package is installed, seen from `base`, whether or not it exports its package.json. */
-const packageDir = (base: string, name: string): string | undefined => {
-  const require = createRequire(path.join(base, 'package.json'))
-  try {
-    return path.dirname(require.resolve(`${name}/package.json`))
-  } catch {
-    // Not exported: find it from its entry point instead.
-  }
-  try {
-    for (let dir = path.dirname(require.resolve(name)); path.dirname(dir) !== dir; dir = path.dirname(dir)) {
-      const file = path.join(dir, 'package.json')
-      if (existsSync(file) && readJson<PackageJson>(file).name === name) return dir
-    }
-  } catch {
-    // Not installed here.
-  }
-  return undefined
 }
 
 /** The `fg-policy` the distribution installed, from `from` or its root. */

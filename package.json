@@ -17,6 +17,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./migrations": {
+      "types": "./dist/migrations.d.ts",
+      "default": "./dist/migrations.js"
+    },
+    "./secrets": {
+      "types": "./dist/secrets.d.ts",
+      "default": "./dist/secrets.js"
     }
   },
   "bin": {
@@ -38,12 +46,17 @@
   },
   "dependencies": {
     "@babel/parser": "^7.29.9",
+    "@next/env": "^16.0.0",
     "mdast-util-from-markdown": "^2.0.3",
+    "pg": "^8.23.0",
     "semver": "^7.8.5"
   },
   "devDependencies": {
     "@babel/types": "^8.0.6",
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
     "@types/semver": "^7.7.1",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",
