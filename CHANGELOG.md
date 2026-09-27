@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.1.0-alpha.8
+
 ## 0.1.0-alpha.7
 
 - `pnpm dist migrate` migrates the databases of what a build deploys, after building it: an app its own, a monolith every app it mounts, each into the database that app uses. Vercel production builds migrate; previews only with `FG_MIGRATE=build`. New distributions run it after `turbo run build`, outside turbo, which would keep an app's database variables from it ([#8](https://github.com/fairgarden/distribution/pull/8))
