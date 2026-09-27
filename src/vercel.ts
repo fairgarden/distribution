@@ -123,15 +123,27 @@ export const removeVariable = (target: VercelProject, name: string, environment:
   run(target, ['env', 'remove', name, environment, '--project', target.project, '--yes'])
 }
 
+export interface LiveDeployment {
+  id: string
+  /** When it was made: it runs with the variables as they were then. */
+  createdAt: number
+}
+
 /**
  * The deployment serving production now — after an instant rollback, not the
  * newest — which redeploying applies new values to without undoing it.
  */
-export const productionDeployment = (target: VercelProject): string | undefined => {
+export const productionDeployment = (target: VercelProject): LiveDeployment | undefined => {
   const project = JSON.parse(run(target, ['api', `/v9/projects/${encodeURIComponent(target.project)}`, '--raw'])) as {
     targets?: { production?: { id?: string } }
   }
-  return project.targets?.production?.id
+  const id = project.targets?.production?.id
+  if (!id) return undefined
+  const deployment = JSON.parse(run(target, ['api', `/v13/deployments/${encodeURIComponent(id)}`, '--raw'])) as {
+    createdAt?: number
+  }
+  // Not knowing when is taking it to be older than anything set since.
+  return { id, createdAt: deployment.createdAt ?? 0 }
 }
 
 /** Build `deployment` again with the variables as they are now, and wait for it. */

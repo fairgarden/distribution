@@ -30,14 +30,14 @@ type Env = Record<string, string | undefined>
 /** The apps to migrate from `root`: itself, or what it depends on. */
 export const migrationTargets = (root: string): Migrations[] => {
   const own = declaredMigrations(root)
-  // An app migrates itself. A monolith migrates every app it mounts — and
-  // itself, when it has migrations too.
-  if (own && !composesApps(root)) return [own]
+  // An app migrates itself, and nothing it merely depends on. A monolith
+  // migrates every app it mounts — and itself, when it has migrations too.
+  const found: Migrations[] = own ? [own] : []
+  if (!composesApps(root)) return found
 
   const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as {
     dependencies?: Record<string, string>
   }
-  const found: Migrations[] = own ? [own] : []
   for (const name of Object.keys(manifest.dependencies ?? {})) {
     const dir = packageDir(root, name)
     const declared = dir ? declaredMigrations(dir) : undefined

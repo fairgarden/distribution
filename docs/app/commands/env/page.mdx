@@ -116,10 +116,13 @@ and the next one removes it. Name variables to rotate only those, and the ones
 tied to them; a name that is not a rotated secret is an error, not a rotation
 of nothing.
 
-A rotation that stops partway — between the side that checks and the side that
-sends — is finished by the next: the new value goes into the slot nothing that
-sends the secret is using, so what it sends is still accepted until it has the
-new one.
+A slot is chosen from each project's settings, which production runs only once
+it is redeployed. So rotating first redeploys any project whose production was
+made before one of its secrets last changed — a rotation that stopped before
+redeploying it, or an instant rollback to before one — where the secret is
+checked before where it is sent. Then the new value goes into the slot nothing
+live sends from. With `--no-redeploy` it refuses instead, and says which to
+redeploy first: deploy between rotations you run that way.
 
 A session sealed with a value lasts until the second rotation after it, so
 rotate less often than a session lasts, or people are signed out. Members'

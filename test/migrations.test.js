@@ -288,6 +288,8 @@ const monolith = () => {
     path.join(root, 'package.json'),
     JSON.stringify({ name: 'mono', dependencies: { '@acme/id': '*', '@acme/members': '*', next: '*' } })
   )
+  // What makes it a monolith, as the scaffold writes it.
+  writeFileSync(path.join(root, 'next.config.ts'), "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n")
   symlinkSync(id, path.join(root, 'node_modules', '@acme', 'id'), 'dir')
   symlinkSync(members, path.join(root, 'node_modules', '@acme', 'members'), 'dir')
   return { root, id, members }
@@ -335,8 +337,16 @@ describe('migrating a monolith', () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
     manifest.fairgarden = { migrations: { directory: 'drizzle', table: 'mono_migrations', lock: 13, database: ['DATABASE_URL'] } }
     writeFileSync(path.join(root, 'package.json'), JSON.stringify(manifest))
-    writeFileSync(path.join(root, 'next.config.ts'), "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n")
     assert.deepEqual(migrationTargets(root).map((target) => target.name), ['mono', '@acme/id', '@acme/members'])
+  })
+
+  test('migrates nothing an app only depends on', () => {
+    const { id } = monolith()
+    const site = mkdtempSync(path.join(tmpdir(), 'site-'))
+    mkdirSync(path.join(site, 'node_modules', '@acme'), { recursive: true })
+    writeFileSync(path.join(site, 'package.json'), JSON.stringify({ name: '@acme/site', dependencies: { '@acme/id': '*' } }))
+    symlinkSync(id, path.join(site, 'node_modules', '@acme', 'id'), 'dir')
+    assert.deepEqual(migrationTargets(site), [])
   })
 
   test('a build on a host with nowhere else to put it has to have a database', async () => {

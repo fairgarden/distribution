@@ -153,10 +153,10 @@ export const deploymentAt = (root: string): Deployment => {
   const manifest = readManifest(root)
   const name = typeof manifest?.name === 'string' ? manifest.name : root
   const own = envApp(root)
-  // An app deploys itself. A monolith deploys every app it mounts — and
-  // itself, when it declares anything too.
-  if (own && !composesApps(root)) return { name, root, apps: [own] }
+  // An app deploys itself, and nothing it merely depends on. A monolith
+  // deploys every app it mounts — and itself, when it declares anything too.
   const apps: EnvApp[] = own ? [own] : []
+  if (!composesApps(root)) return { name, root, apps }
   for (const dependency of Object.keys((manifest?.dependencies as Record<string, string>) ?? {})) {
     const dir = packageDir(root, dependency)
     const app = dir ? envApp(dir) : undefined

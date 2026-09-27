@@ -17,13 +17,16 @@ import {
   requirementsFor,
 } from './env.ts'
 import {
+  applyCatchUp,
   applyRotation,
   applySetup,
   missingRemotely,
+  planCatchUp,
   planRotation,
   planSetup,
   remotesOf,
 } from './env-vercel.ts'
+import { productionDeployment } from './vercel.ts'
 import { writeRotationWorkflow } from './workflows.ts'
 import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
@@ -1772,12 +1775,14 @@ const envCommand = async (args: Args): Promise<number> => {
 
   if (action === 'workflow') {
     const written = await writeRotationWorkflow(distribution, { force: args.force, dryRun: args.dryRun })
-    process.stdout.write(
-      written
-        ? `${written}: rotates the secrets on the 1st of every month, and on demand.\n` +
-            'It signs in to Vercel with VERCEL_TOKEN: add it to the repository\'s Actions secrets.\n'
-        : 'The rotation workflow is there already. Pass --force to overwrite it.\n'
-    )
+    if (!written) process.stdout.write('The rotation workflow is there already. Pass --force to overwrite it.\n')
+    else if (args.dryRun) process.stdout.write(`Dry run: would write ${written}.\n`)
+    else {
+      process.stdout.write(
+        `${written}: rotates the secrets on the 1st of every month, and on demand.\n` +
+          'It signs in to Vercel with VERCEL_TOKEN: add it to the repository\'s Actions secrets.\n'
+      )
+    }
     return 0
   }
 
@@ -1838,6 +1843,25 @@ const envCommand = async (args: Args): Promise<number> => {
       process.stdout.write('Nothing to rotate: no rotated secret is set yet. `pnpm dist env setup` sets them.\n')
       return 0
     }
+    // A slot is chosen from the settings, so production has to be running them.
+    const behind =
+      environment === 'production'
+        ? planCatchUp(remotes, new Map(remotes.map((remote) => [remote, productionDeployment(remote.target)])), variables)
+        : []
+    if (behind.length > 0 && !args.redeploy) {
+      const projects = behind.map(({ remote }) => remote.target.project)
+      process.stderr.write(
+        `Production in ${projects.join(' and ')} was made before its secrets last changed, so it may still send a ` +
+          `value rotating would go over. Redeploy ${projects.length > 1 ? 'them, in that order,' : 'it'} first, or ` +
+          'rotate without --no-redeploy, which does.\n'
+      )
+      return 1
+    }
+    if (behind.length > 0) {
+      process.stdout.write('Production made before its secrets last changed, redeployed first:\n')
+      for (const { remote, secrets } of behind) process.stdout.write(`  ${remote.target.project}  ${secrets.join(', ')}\n`)
+      process.stdout.write('Then rotated:\n')
+    }
     phases.forEach((phase, index) => {
       if (phases.length > 1) process.stdout.write(`${index + 1}.\n`)
       for (const { remote, variable } of phase) process.stdout.write(`  ${remote.target.project}  ${variable}\n`)
@@ -1854,6 +1878,7 @@ const envCommand = async (args: Args): Promise<number> => {
         return answer === undefined ? 1 : 0
       }
     }
+    applyCatchUp(behind, { onProgress: (line) => process.stdout.write(`${line}\n`) })
     applyRotation(phases, environment, {
       redeploy: args.redeploy,
       onProgress: (line) => process.stdout.write(`${line}\n`),

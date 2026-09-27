@@ -15,6 +15,7 @@ import {
 import {
   listVariables,
   productionDeployment,
+  type LiveDeployment,
   redeploy,
   removeVariable,
   setVariable,
@@ -287,6 +288,9 @@ export const planSetup = async (
   const rotated = rotatedOf(everyApp(remotes))
   const decided = new Map<string, { value: string; slot: Slot }>()
   const plan: SetupPlan = { writes: [], notes: [], unresolved: [] }
+  // A tied secret moved with its group is not written again as missing.
+  const repaired = new Set<string>()
+  const key = (remote: Remote, name: string) => `${remote.at}\0${name}`
 
   for (const { remote, absent } of missingRemotely(remotes, environment)) {
     for (const requirement of absent) {
@@ -310,10 +314,12 @@ export const planSetup = async (
           for (const { remote: where, name } of already) {
             // This one is written below, as what was missing.
             if (where === remote && name === variable) continue
+            repaired.add(key(where, name))
             plan.writes.push(...intoSlot(where, name, chosen.slot, chosen.value))
             plan.notes.push({ remote: where, variable: name, source: `moved to a new value, to match ${variable}` })
           }
         }
+        if (repaired.has(key(remote, variable))) continue
         plan.writes.push(...intoSlot(remote, variable, chosen.slot, chosen.value))
         plan.notes.push({ remote, variable, source: group.length > 1 ? 'generated, alike wherever it is shared' : 'generated' })
         continue
@@ -355,6 +361,110 @@ export interface Rotation {
 }
 
 /**
+ * Every rotated secret set in each project, once, however many of its apps
+ * declare it — and they have to mean the same by it.
+ */
+const rotatedIn = (remotes: Remote[]): Member[] => {
+  const apps = everyApp(remotes)
+  const found: Member[] = []
+  for (const remote of remotes) {
+    const here = new Set(remote.deployment.apps.map((app) => app.name))
+    const seen = new Map<string, Requirement>()
+    for (const app of apps) {
+      for (const [variable, declaration] of Object.entries(app.env)) {
+        if (!declaration.rotate || !here.has(declaration.deployment ?? app.name)) continue
+        if (!isPresent(remote.existing, variable)) continue
+        const already = seen.get(variable)
+        if (already) {
+          assertAgree(variable, already, app.name, declaration)
+          continue
+        }
+        seen.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
+        found.push({ remote, name: variable, verifies: Boolean(declaration.verifies) })
+      }
+    }
+  }
+  return found
+}
+
+/** When any of a secret's variables last changed in a project. */
+const changedAt = (existing: Map<string, VercelVariable>, name: string): number =>
+  Math.max(
+    0,
+    ...[name, ...SLOTS.map((slot) => slotVariable(name, slot)), pointerVariable(name)].map(
+      (variable) => existing.get(variable)?.updatedAt ?? 0
+    )
+  )
+
+export interface CatchUp {
+  remote: Remote
+  live: LiveDeployment
+  /** The secrets changed since it was made. */
+  secrets: string[]
+}
+
+/**
+ * The projects whose production was made before one of its rotated secrets
+ * last changed — a rotation that stopped before redeploying it, or an instant
+ * rollback to before one — in the order to redeploy them: where a shared
+ * secret is checked before where it is sent.
+ *
+ * A slot is chosen from a project's settings, which are only what production
+ * runs once it is made again. Until then a new value could go over the one a
+ * live deployment still sends, so these are redeployed before anything is
+ * rotated.
+ */
+export const planCatchUp = (
+  remotes: Remote[],
+  live: Map<Remote, LiveDeployment | undefined>,
+  only: string[] = []
+): CatchUp[] => {
+  const groups = groupsOf(everyApp(remotes))
+  const behind = rotatedIn(remotes).filter(({ remote, name }) => {
+    const deployed = live.get(remote)
+    if (only.length > 0 && !(groups.get(name) ?? [name]).some((tied) => only.includes(tied))) return false
+    return deployed !== undefined && changedAt(remote.existing, name) > deployed.createdAt
+  })
+  // A project sending a secret waits for every other that checks it.
+  const waitsFor = new Map<Remote, Set<Remote>>()
+  for (const sender of behind.filter((member) => !member.verifies)) {
+    const group = groups.get(sender.name) ?? [sender.name]
+    for (const checker of behind) {
+      if (!checker.verifies || checker.remote === sender.remote || !group.includes(checker.name)) continue
+      waitsFor.set(sender.remote, (waitsFor.get(sender.remote) ?? new Set()).add(checker.remote))
+    }
+  }
+  const order: Remote[] = []
+  let left = [...new Set(behind.map((member) => member.remote))]
+  while (left.length > 0) {
+    const ready = left.filter((remote) => [...(waitsFor.get(remote) ?? [])].every((before) => order.includes(before)))
+    if (ready.length === 0) {
+      throw new Error(
+        `${left.map((remote) => remote.target.project).join(' and ')} each check a secret another of them sends, ` +
+          'and none has production made since it changed: whichever is redeployed first turns the other away until ' +
+          'it is redeployed too. Redeploy them yourself, then rotate.'
+      )
+    }
+    order.push(...ready)
+    left = left.filter((remote) => !ready.includes(remote))
+  }
+  return order.map((remote) => ({
+    remote,
+    live: live.get(remote)!,
+    secrets: behind.filter((member) => member.remote === remote).map((member) => member.name),
+  }))
+}
+
+/** Redeploy production where it is behind its settings, in order, each before the next. */
+export const applyCatchUp = (behind: CatchUp[], { onProgress }: { onProgress?: (line: string) => void } = {}): void => {
+  for (const { remote, live } of behind) {
+    onProgress?.(`${remote.target.project}  redeploying production, made before its secrets last changed…`)
+    const url = redeploy(remote.target, live.id)
+    onProgress?.(`${remote.target.project}  ${url || 'redeployed'}`)
+  }
+}
+
+/**
  * The order rotating goes in, a phase at a time, each redeployed before the
  * next: what checks a shared secret first — it takes the new value and still
  * accepts the old — then what sends it. Each rotation writes a new value into
@@ -374,28 +484,9 @@ export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[]
     )
   }
   const groupOf = (name: string): string[] => groups.get(name) ?? [name]
-
-  // Every rotated secret set in each project, once, however many of its apps
-  // declare it — and they have to mean the same by it.
-  const found: Member[] = []
-  for (const remote of remotes) {
-    const here = new Set(remote.deployment.apps.map((app) => app.name))
-    const seen = new Map<string, Requirement>()
-    for (const app of apps) {
-      for (const [variable, declaration] of Object.entries(app.env)) {
-        if (!declaration.rotate || !here.has(declaration.deployment ?? app.name)) continue
-        if (!isPresent(remote.existing, variable)) continue
-        const already = seen.get(variable)
-        if (already) {
-          assertAgree(variable, already, app.name, declaration)
-          continue
-        }
-        seen.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
-        if (only.length > 0 && !groupOf(variable).some((tied) => only.includes(tied))) continue
-        found.push({ remote, name: variable, verifies: Boolean(declaration.verifies) })
-      }
-    }
-  }
+  const found = rotatedIn(remotes).filter(
+    ({ name }) => only.length === 0 || groupOf(name).some((tied) => only.includes(tied))
+  )
 
   // One new value, and one slot, for each group, chosen from all of it.
   const chosen = new Map<string, { value: string; slot: Slot }>()
@@ -448,7 +539,7 @@ export const applyRotation = (
         continue
       }
       onProgress?.(`${remote.target.project}  redeploying production…`)
-      const url = redeploy(remote.target, live)
+      const url = redeploy(remote.target, live.id)
       onProgress?.(`${remote.target.project}  ${url || 'redeployed'}`)
     }
   }

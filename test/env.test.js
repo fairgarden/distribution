@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { execFile, execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { deploymentAt, distributionDeployments, envApp, missing, requirementsFor } from '../dist/env.js'
-import { assertTies, planRotation, remotesOf } from '../dist/env-vercel.js'
+import { assertTies, planCatchUp, planRotation, remotesOf } from '../dist/env-vercel.js'
 import { secretValues } from '../dist/secrets.js'
+import { rotationWorkflow } from '../dist/workflows.js'
 
 process.env.GIT_CONFIG_COUNT = '1'
 process.env.GIT_CONFIG_KEY_0 = 'commit.gpgsign'
@@ -72,6 +73,9 @@ const MEMBERS = {
   },
 }
 
+/** What makes a package a monolith, as the scaffold writes it. */
+const MONOLITH_CONFIG = "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n"
+
 /** An app checked out as a submodule would be: a repository of its own. */
 const checkout = (dir, manifest) => {
   mkdirSync(dir, { recursive: true })
@@ -96,6 +100,7 @@ const distribution = ({ monolith }) => {
     const dir = path.join(root, 'apps', 'monolith')
     mkdirSync(path.join(dir, 'node_modules', '@acme'), { recursive: true })
     json(path.join(dir, 'package.json'), { name: '@acme/core-monolith', dependencies: { '@acme/id': '*', '@acme/members': '*' } })
+    writeFileSync(path.join(dir, 'next.config.ts'), MONOLITH_CONFIG)
     for (const app of ['id', 'members']) symlinkSync(path.join(root, 'apps', app), path.join(dir, 'node_modules', '@acme', app), 'dir')
   }
   return root
@@ -114,7 +119,7 @@ const distribution = ({ monolith }) => {
 const fakeVercel = (projects = {}, { policy } = {}) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vercel-'))
   const state = path.join(dir, 'state.json')
-  json(state, { projects, policy, clock: 1, log: [] })
+  json(state, { projects, policy, clock: 1, log: [], deployed: {} })
   const bin = path.join(dir, 'vercel')
   writeFileSync(
     bin,
@@ -142,10 +147,15 @@ if (command === 'env' && sub === 'list') {
   variable[environment] = { value: stdin(), sensitive, updatedAt: state.clock++ }
 } else if (command === 'env' && sub === 'remove') {
   delete project()[name]?.[environment]
-} else if (command === 'api') {
+} else if (command === 'api' && sub.startsWith('/v9/projects/')) {
   const id = decodeURIComponent(sub.split('/').pop())
-  process.stdout.write(JSON.stringify({ targets: { production: { id: 'dpl_' + id } } }))
+  process.stdout.write(JSON.stringify({ targets: state.deployed[id] === undefined ? {} : { production: { id: 'dpl_' + id } } }))
+} else if (command === 'api' && sub.startsWith('/v13/deployments/dpl_')) {
+  process.stdout.write(JSON.stringify({ createdAt: state.deployed[decodeURIComponent(sub.split('/').pop()).slice(4)] }))
 } else if (command === 'redeploy') {
+  const id = sub.slice(4)
+  if (state.failing === id) { process.stderr.write('build failed'); process.exit(1) }
+  state.deployed[id] = state.clock++
   process.stdout.write('https://' + sub + '.vercel.app')
 } else { process.stderr.write('unexpected: ' + args.join(' ')); process.exit(1) }
 save()
@@ -153,9 +163,21 @@ save()
   )
   chmodSync(bin, 0o755)
   const read = () => JSON.parse(readFileSync(state, 'utf8'))
+  const change = (update) => {
+    const current = read()
+    update(current)
+    json(state, current)
+  }
   return {
     bin,
     read,
+    /** Production made now, with the variables as they are, in every project or these. */
+    deploy: (...only) =>
+      change((current) => {
+        for (const project of only.length > 0 ? only : Object.keys(current.projects)) current.deployed[project] = current.clock++
+      }),
+    /** A project whose redeploys fail, or none. */
+    failing: (project) => change((current) => (current.failing = project)),
     // What the test can see and the tool never can.
     value: (project, key, environment = 'production') => read().projects[project]?.[key]?.[environment],
     /** A secret's values as the app reads them, newest first. */
@@ -206,10 +228,18 @@ describe('what a deployment needs', () => {
     const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'))
     manifest.fairgarden = { env: { ACME_ANALYTICS_ID: { description: 'Counts visits.', required: 'deployed' } } }
     json(path.join(dir, 'package.json'), manifest)
-    writeFileSync(path.join(dir, 'next.config.ts'), "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n")
     const deployment = deploymentAt(dir)
     assert.deepEqual(deployment.apps.map((app) => app.name), ['@acme/core-monolith', '@acme/id', '@acme/members'])
     assert.ok(requirementsFor(deployment, 'production').some((requirement) => requirement.variable === 'ACME_MEMBERS_SECRET'))
+  })
+
+  test('an app needs nothing an app it only depends on declares', () => {
+    const root = distribution({ monolith: false })
+    const site = path.join(root, 'apps', 'site')
+    mkdirSync(path.join(site, 'node_modules', '@acme'), { recursive: true })
+    json(path.join(site, 'package.json'), { name: '@acme/site', dependencies: { '@acme/members': '*' } })
+    symlinkSync(path.join(root, 'apps', 'members'), path.join(site, 'node_modules', '@acme', 'members'), 'dir')
+    assert.deepEqual(deploymentAt(site).apps, [])
   })
 
   test('will not guess what a module not checked out needs', () => {
@@ -346,6 +376,20 @@ describe('setting up Vercel', () => {
     assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_CLAIMS').value, 'membership')
   })
 
+  test('moves a tied secret with its group once, however many of the group were missing', async () => {
+    const root = distribution({ monolith: false })
+    // members has a slot nothing points at; id has nothing at all
+    const vercel = fakeVercel({
+      'acme-members': { ACME_MEMBERS_CLIENT_SECRET_A: { production: { value: 'x', sensitive: true, updatedAt: 0 } } },
+    })
+    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    assert.doesNotMatch(result.stderr, /failed/)
+    const log = vercel.read().log
+    assert.equal(log.filter((line) => line.startsWith('env add ACME_MEMBERS_CLIENT_SECRET_CURRENT')).length, 1)
+    const [value] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
+    assert.equal(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET')[0], value)
+  })
+
   test('a dry run keeps nothing, not even a project it was told', async () => {
     const root = distribution({ monolith: true })
     const manifest = path.join(root, 'package.json')
@@ -423,6 +467,7 @@ describe('rotating', () => {
     const root = distribution({ monolith })
     const vercel = fakeVercel({}, options)
     await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    vercel.deploy()
     vercel.before = vercel.read()
     return { root, vercel }
   }
@@ -459,9 +504,9 @@ describe('rotating', () => {
 
   test('keeps one value before the new one, and drops the rest', async () => {
     const { root, vercel } = await setUp(true)
-    await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+    await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
     const second = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
-    await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+    await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
     const third = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
     assert.equal(third.length, 2)
     assert.equal(third[1], second[0])
@@ -472,7 +517,7 @@ describe('rotating', () => {
     const { root, vercel } = await setUp(true, { policy: 'sensitive' })
     assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').sensitive, true)
     for (const expected of ['B', 'A', 'B']) {
-      const result = await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+      const result = await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
       assert.equal(result.status, 0, result.stderr)
       assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, expected)
       assert.equal(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').length, 2)
@@ -541,6 +586,7 @@ describe('rotating', () => {
     json(manifest, members)
     const vercel = fakeVercel()
     await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    vercel.deploy()
     const before = vercel.read().log.length
     assert.equal((await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })).status, 0)
     const log = vercel.read().log.slice(before)
@@ -571,16 +617,69 @@ describe('rotating', () => {
     assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [fresh, 'sent'])
   })
 
+  test('redeploys what a stopped rotation left behind before choosing a slot', async () => {
+    const { root, vercel } = await setUp(false)
+    // members takes its new value, and its redeploy fails: production still sends the old one
+    vercel.failing('acme-members')
+    assert.equal((await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })).status, 1)
+    vercel.failing(undefined)
+
+    const before = vercel.read().log.length
+    const result = await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /redeployed first:\n {2}acme-members {2}ACME_MEMBERS_SECRET, ACME_MEMBERS_CLIENT_SECRET\n/)
+    const log = vercel.read().log.slice(before)
+    const at = (entry) => log.findIndex((line) => line.startsWith(entry))
+    // what members sends is live before the slot it was sent from is gone over
+    assert.notEqual(at('redeploy dpl_acme-members'), -1)
+    assert.ok(at('redeploy dpl_acme-members') < at('env update ACME_ID_SERVICE_MEMBERS_SECRET_A'))
+  })
+
+  test('without redeploying, will not rotate what production has not caught up with', async () => {
+    const { root, vercel } = await setUp(true)
+    assert.equal((await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })).status, 0)
+    const rotated = vercel.read().projects
+    const result = await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /Production in acme-core was made before its secrets last changed[\s\S]*Redeploy it first/)
+    assert.deepEqual(vercel.read().projects, rotated)
+  })
+
+  const secret = { description: 's', generate: 'secret', rotate: true }
+  const app = (name, env) => ({ name, root: '/', env, migrations: undefined })
+  const variable = (value, updatedAt = 1) => ({ value, type: 'encrypted', updatedAt })
+  const remote = (project, app, existing) => ({
+    deployment: { name: app.name, root: '/', apps: [app] },
+    at: project,
+    target: { project },
+    existing: new Map(Object.entries(existing)),
+  })
+
+  test('catches up where a secret is checked before where it is sent, and nothing up to date or never deployed', () => {
+    const checks = app('@acme/checks', { KEY: { ...secret, verifies: true } })
+    const one = app('@acme/one', { ONE_KEY: { ...secret, sameAs: 'KEY' } })
+    const other = app('@acme/other', { OTHER_KEY: secret })
+    const remotes = [
+      remote('one', one, { ONE_KEY_A: variable(undefined, 5), ONE_KEY_CURRENT: variable('A', 5) }),
+      remote('checks', checks, { KEY_A: variable(undefined, 5), KEY_CURRENT: variable('A', 5) }),
+      remote('other', other, { OTHER_KEY_A: variable(undefined, 5), OTHER_KEY_CURRENT: variable('A', 5) }),
+    ]
+    const projects = (live) => planCatchUp(remotes, new Map(remotes.map((each, index) => [each, live[index]]))).map((each) => each.remote.target.project)
+    const at = (createdAt) => ({ id: 'dpl', createdAt })
+    assert.deepEqual(projects([at(1), at(1), undefined]), ['checks', 'one'])
+    assert.deepEqual(projects([at(9), at(1), at(9)]), ['checks'])
+  })
+
+  test('will not choose which of two projects to catch up first when each checks what the other sends', () => {
+    const one = app('@acme/one', { ONE_KEY: { ...secret, verifies: true }, TWO_SENT: { ...secret, sameAs: 'TWO_KEY' } })
+    const two = app('@acme/two', { TWO_KEY: { ...secret, verifies: true }, ONE_SENT: { ...secret, sameAs: 'ONE_KEY' } })
+    const set = (...names) => Object.fromEntries(names.map((name) => [`${name}_A`, variable(undefined, 5)]))
+    const remotes = [remote('one', one, set('ONE_KEY', 'TWO_SENT')), remote('two', two, set('TWO_KEY', 'ONE_SENT'))]
+    const live = new Map(remotes.map((each) => [each, { id: 'dpl', createdAt: 1 }]))
+    assert.throws(() => planCatchUp(remotes, live), /one and two each check a secret another of them sends/)
+  })
+
   test('will not choose a slot when those sending one secret are on different ones', () => {
-    const secret = { description: 's', generate: 'secret', rotate: true }
-    const app = (name, env) => ({ name, root: '/', env, migrations: undefined })
-    const variable = (value, updatedAt = 1) => ({ value, type: 'encrypted', updatedAt })
-    const remote = (project, app, existing) => ({
-      deployment: { name: app.name, root: '/', apps: [app] },
-      at: project,
-      target: { project },
-      existing: new Map(Object.entries(existing)),
-    })
     const checks = app('@acme/checks', { KEY: { ...secret, verifies: true } })
     const one = app('@acme/one', { ONE_KEY: { ...secret, sameAs: 'KEY' } })
     const two = app('@acme/two', { TWO_KEY: { ...secret, sameAs: 'KEY' } })
@@ -590,6 +689,33 @@ describe('rotating', () => {
       remote('two', two, { TWO_KEY_B: variable(undefined), TWO_KEY_CURRENT: variable('B') }),
     ]
     assert.throws(() => planRotation(remotes), /ONE_KEY in one and TWO_KEY in two send one secret from different slots/)
+  })
+
+  test('is scheduled monthly by a workflow that signs in with a token and has the apps checked out', () => {
+    const files = rotationWorkflow()
+    assert.deepEqual(Object.keys(files), ['.github/workflows/rotate-secrets.yml'])
+    const workflow = files['.github/workflows/rotate-secrets.yml']
+    assert.match(workflow, /schedule:\n {4}- cron: '0 6 1 \* \*'\n {2}workflow_dispatch:/)
+    assert.match(workflow, /persist-credentials: false\n {10}submodules: true/)
+    assert.match(workflow, /VERCEL_TOKEN: \$\{\{ secrets\.VERCEL_TOKEN \}\}\n {8}run: pnpm run dist env rotate --yes\n/)
+  })
+
+  test('the workflow is written once, over one there only when forced, and not at all on a dry run', async () => {
+    const root = distribution({ monolith: true })
+    const file = path.join(root, '.github', 'workflows', 'rotate-secrets.yml')
+    const dry = await fgDist(root, ['env', 'workflow', '--dry-run'])
+    assert.match(dry.stdout, /Dry run: would write \.github\/workflows\/rotate-secrets\.yml/)
+    assert.equal(existsSync(file), false)
+
+    assert.match((await fgDist(root, ['env', 'workflow'])).stdout, /VERCEL_TOKEN/)
+    const written = readFileSync(file, 'utf8')
+    assert.equal(written, rotationWorkflow()['.github/workflows/rotate-secrets.yml'])
+
+    writeFileSync(file, 'changed by hand\n')
+    assert.match((await fgDist(root, ['env', 'workflow'])).stdout, /there already\. Pass --force/)
+    assert.equal(readFileSync(file, 'utf8'), 'changed by hand\n')
+    await fgDist(root, ['env', 'workflow', '--force'])
+    assert.equal(readFileSync(file, 'utf8'), written)
   })
 
   test('asks first, and without anyone to ask, does nothing', async () => {
