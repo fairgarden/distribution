@@ -8,6 +8,16 @@ import { extractModule } from './extract.ts'
 import { writeReadmes } from './readme.ts'
 import { verify } from './verify.ts'
 import { inBuild, loadEnvFiles, migrationTargets, runMigrations, type MigrateAction } from './migrate.ts'
+import {
+  deploymentAt,
+  describeMissing,
+  distributionAround,
+  distributionDeployments,
+  missing,
+  requirementsFor,
+} from './env.ts'
+import { applyRotation, applySetup, missingRemotely, planRotation, planSetup, remotesOf } from './env-vercel.ts'
+import { writeRotationWorkflow } from './workflows.ts'
 import { toolRelease, writeDistributionChecks, writeDistributionWorkflow, writeWorkflows } from './workflows.ts'
 import { writeOverrides } from './overrides.ts'
 import {
@@ -85,6 +95,10 @@ Commands:
   check                Fail when this ships anything older than what it extends
   verify               Fail when a file fg-dist writes no longer says what is true (CI)
   migrate [name...]    Migrate the databases of this app, or of every app this monolith ships
+  env check            Fail when a deployment lacks what its apps need (--build: this one, in its build)
+  env setup            Add what each deployment's Vercel project lacks: secrets generated, the rest asked
+  env rotate [var...]  Rotate the generated secrets with no downtime, and redeploy production
+  env workflow         Write the workflow that rotates them every month
   inherit              Add the modules the distribution this extends ships, and this does not
   sync                 Report which modules have newer versions available
   bump [name...]       Move modules to their newest non-major version; a fork merges it
@@ -134,6 +148,9 @@ Options:
   --status             What has run and what is pending, changing nothing (migrate)
   --rollback           Roll back the latest migration, --steps N of them, or all after --to TAG (migrate)
   --steps <n>          How many to roll back (migrate --rollback)
+  --environment <env>  Vercel environment: production (default) or preview (env)
+  --no-redeploy        Rotate without redeploying production (env rotate)
+  --yes                Rotate without asking first (env rotate)
 `
 
 interface Args {
@@ -170,6 +187,9 @@ interface Args {
   status: boolean
   rollback: boolean
   steps: number | undefined
+  environment: string | undefined
+  redeploy: boolean
+  yes: boolean
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -207,6 +227,9 @@ const parseArgs = (argv: string[]): Args => {
     status: false,
     rollback: false,
     steps: undefined,
+    environment: undefined,
+    redeploy: true,
+    yes: false,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -225,6 +248,12 @@ const parseArgs = (argv: string[]): Args => {
       args.check = true
     } else if (arg === '--build') {
       args.build = true
+    } else if (arg === '--environment') {
+      args.environment = value()
+    } else if (arg === '--no-redeploy') {
+      args.redeploy = false
+    } else if (arg === '--yes' || arg === '-y') {
+      args.yes = true
     } else if (arg === '--status') {
       args.status = true
     } else if (arg === '--rollback') {
@@ -1138,6 +1167,10 @@ const main = async (): Promise<number> => {
     return 0
   }
 
+  if (args.command === 'env') {
+    return envCommand(args)
+  }
+
   if (args.command === 'verify') {
     const root = repositoryRoot(args.cwd)
     if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
@@ -1652,6 +1685,148 @@ const main = async (): Promise<number> => {
 
   process.stderr.write(`Unknown command: ${args.command}\n\n${USAGE}`)
   return 1
+}
+
+/** A question on the terminal, or undefined where there is nobody to ask. */
+const prompt = async (question: string): Promise<string | undefined> => {
+  if (!process.stdin.isTTY) return undefined
+  const { createInterface } = await import('node:readline/promises')
+  const readline = createInterface({ input: process.stdin, output: process.stderr })
+  try {
+    return (await readline.question(question)).trim() || undefined
+  } finally {
+    readline.close()
+  }
+}
+
+const envCommand = async (args: Args): Promise<number> => {
+  const [action = 'check', ...variables] = args.names
+  const environment = args.environment ?? 'production'
+  if (!['production', 'preview'].includes(environment)) {
+    throw new Error(`--environment is production or preview, not ${environment}.`)
+  }
+
+  // The build's own check: what this deployment is about to run with.
+  if (action === 'check' && args.build) {
+    const gate = process.env.FG_ENV_CHECK
+    if (gate === 'skip') {
+      process.stdout.write('Not checking the environment: FG_ENV_CHECK is skip.\n')
+      return 0
+    }
+    if (!process.env.VERCEL && gate !== 'build') {
+      process.stdout.write('Not checking the environment: this is not a Vercel build; FG_ENV_CHECK=build checks here.\n')
+      return 0
+    }
+    const building = process.env.VERCEL_ENV ?? environment
+    if (building !== 'production' && building !== 'preview') {
+      process.stdout.write(`Not checking the environment: a ${building} build deploys nothing.\n`)
+      return 0
+    }
+    loadEnvFiles(args.cwd, { dev: false })
+    const deployment = deploymentAt(args.cwd)
+    const distribution = distributionAround(args.cwd)
+    const peers = distribution ? distributionDeployments(distribution).flatMap((each) => each.apps) : []
+    const absent = missing(requirementsFor(deployment, building, peers), process.env)
+    if (absent.length > 0) {
+      process.stderr.write(`${describeMissing(deployment, building, absent)}\n`)
+      return 1
+    }
+    process.stdout.write(`${deployment.name} has everything a ${building} deployment needs.\n`)
+    return 0
+  }
+
+  const distribution = distributionAround(args.cwd) ?? args.cwd
+
+  if (action === 'workflow') {
+    const written = await writeRotationWorkflow(distribution, { force: args.force, dryRun: args.dryRun })
+    process.stdout.write(
+      written
+        ? `${written}: rotates the secrets on the 1st of every month, and on demand.\n` +
+            'It signs in to Vercel with VERCEL_TOKEN: add it to the repository\'s Actions secrets.\n'
+        : 'The rotation workflow is there already. Pass --force to overwrite it.\n'
+    )
+    return 0
+  }
+
+  const remotes = await remotesOf(distribution, environment, {
+    project: (at) => prompt(`Which Vercel project deploys ${at}? `),
+  })
+
+  if (action === 'check') {
+    let failed = false
+    for (const { remote, absent } of missingRemotely(remotes, environment)) {
+      if (absent.length === 0) {
+        process.stdout.write(`${remote.target.project} (${remote.at}) has everything ${environment} needs.\n`)
+        continue
+      }
+      failed = true
+      process.stderr.write(`${describeMissing(remote.deployment, environment, absent)}\n\n`)
+    }
+    return failed ? 1 : 0
+  }
+
+  if (action === 'setup') {
+    const plan = await planSetup(remotes, environment, {
+      ask: (requirement, remote) =>
+        prompt(
+          `${requirement.variable} for ${remote.target.project} — ${requirement.declaration.description}` +
+            (requirement.declaration.example ? ` (e.g. ${requirement.declaration.example})` : '') +
+            '\n  '
+        ),
+    })
+    const width = pad(plan.planned.map((each) => each.variable))
+    for (const { remote, variable, source, sensitive } of plan.planned) {
+      process.stdout.write(
+        `${remote.target.project}  ${variable.padEnd(width)}  ${source}${sensitive ? ', sensitive' : ''}\n`
+      )
+    }
+    if (plan.planned.length === 0 && plan.unresolved.length === 0) {
+      process.stdout.write(`Every project has what ${environment} needs.\n`)
+      return 0
+    }
+    if (!args.dryRun && plan.planned.length > 0) {
+      applySetup(plan, environment)
+      process.stdout.write(`Added ${plan.planned.length} to ${environment}. They apply from the next deployment.\n`)
+    } else if (args.dryRun) {
+      process.stdout.write('Dry run: nothing added.\n')
+    }
+    for (const { remote, requirement, why } of plan.unresolved) {
+      process.stderr.write(`${remote.target.project}  ${requirement.variable}: ${why}.\n`)
+    }
+    return plan.unresolved.length > 0 ? 1 : 0
+  }
+
+  if (action === 'rotate') {
+    const phases = planRotation(remotes, variables)
+    if (phases.length === 0) {
+      process.stdout.write('Nothing to rotate: no rotated secret is set yet. `pnpm dist env setup` sets them.\n')
+      return 0
+    }
+    phases.forEach((phase, index) => {
+      if (phases.length > 1) process.stdout.write(`${index + 1}.\n`)
+      for (const { remote, variable } of phase) process.stdout.write(`  ${remote.target.project}  ${variable}\n`)
+    })
+    if (args.dryRun) {
+      process.stdout.write('Dry run: nothing rotated.\n')
+      return 0
+    }
+    const redeploying = environment === 'production' && args.redeploy
+    if (!args.yes) {
+      const answer = await prompt(`Rotate these${redeploying ? ', redeploying production after each step' : ''}? [y/N] `)
+      if (!/^y(es)?$/i.test(answer ?? '')) {
+        process.stdout.write(answer === undefined ? 'Pass --yes to rotate without being asked.\n' : 'Nothing rotated.\n')
+        return answer === undefined ? 1 : 0
+      }
+    }
+    applyRotation(phases, environment, {
+      redeploy: args.redeploy,
+      onProgress: (line) => process.stdout.write(`${line}\n`),
+    })
+    if (!redeploying) process.stdout.write(`Rotated. They apply from the next ${environment} deployment.\n`)
+    return 0
+  }
+
+  throw new Error(`env takes check, setup, rotate or workflow, not ${action}.`)
 }
 
 main().then(
