@@ -41,9 +41,10 @@ jobs:
             pnpm install --no-frozen-lockfile
           fi
 
-      # Only where fg-dist is developed in this workspace; see publish.yml.
+      # Only where fg-dist is developed in this workspace — its own repository,
+      # where it is the root pnpm otherwise leaves out, or a distribution's.
       - name: Build fg-dist
-        run: pnpm --filter @fairgarden/distribution run --if-present build
+        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build
 
       - name: Check for a line linking this pull request
         run: pnpm run changelog check

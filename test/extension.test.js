@@ -245,7 +245,7 @@ test("a distribution's own workflow publishes it with its submodules and its pol
   assert.match(workflow, /pnpm run canary/)
   assert.doesNotMatch(workflow, /pnpm run --if-present build/)
   // but fg-dist is built where it is a module of the distribution itself
-  assert.match(workflow, /pnpm --filter @fairgarden\/distribution run --if-present build/)
+  assert.match(workflow, /pnpm --filter @fairgarden\/distribution --include-workspace-root run --if-present build/)
 
   const manifest = readJson(path.join(parent, 'package.json'))
   assert.equal(manifest.private, undefined)

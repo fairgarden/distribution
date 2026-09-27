@@ -103,6 +103,8 @@ jobs:
     permissions:
       contents: write # Required for pushing the tag and creating the release
       id-token: write # Required for provenance and trusted publishing
+      actions: write # Required to run open pull requests' changelog check again
+      pull-requests: read # Required to find them
     environment:
       name: npm-publish
     steps:
@@ -150,9 +152,20 @@ jobs:
           fi
           gh release create "\$TAG" --title "\$TAG" \$notes --verify-tag
 
+      - name: Hold pull requests until the next version
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        # Anything merged now would be noted under a version already out. Each
+        # open pull request's changelog check runs again, sees the release and
+        # refuses it — until \`fg-dist release\` starts the next version and the
+        # branch catches up with it.
+        run: pnpm run changelog hold
+
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\` to the \\\`\${{ inputs.dist-tag }}\\\` tag." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`fg-dist release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
 
   '.github/actions/publish-prepare/action.yml': `name: Prepare for publishing
@@ -213,13 +226,17 @@ runs:
 })
 
 /** Steps both of a distribution's publishing jobs start with. */
-const distributionSetup = (fetchDepth: boolean): string => `      - name: Checkout
+const distributionSetup = (release: boolean): string => `      - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          persist-credentials: false
           # What it publishes is read from its modules: their versions, and
           # the commits it pins.
-          submodules: true${fetchDepth ? '\n          fetch-depth: 0 # `gh release create --generate-notes` needs history' : ''}
+          submodules: true${
+            release
+              ? '\n          fetch-depth: 0 # `gh release create --generate-notes` needs history' +
+                '\n          # Kept, to push the tag and move main on.'
+              : '\n          persist-credentials: false'
+          }
 
       # No build: what a distribution publishes is its manifest and its
       # policy, not its apps.
@@ -241,7 +258,7 @@ const distributionSetup = (fetchDepth: boolean): string => `      - name: Checko
       # distribution: then it is linked from its checkout, which is not built.
       # Everywhere else it is installed from npm, and this matches nothing.
       - name: Build fg-dist
-        run: pnpm --filter @fairgarden/distribution run --if-present build
+        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build
 `
 
 /**
@@ -313,6 +330,8 @@ ${distributionSetup(false)}
     permissions:
       contents: write # Required for pushing the tag and creating the release
       id-token: write # Required for provenance and trusted publishing
+      actions: write # Required to run open pull requests' changelog check again
+      pull-requests: read # Required to find them
     environment:
       name: npm-publish
     steps:
@@ -351,9 +370,20 @@ ${distributionSetup(true)}
           fi
           gh release create "\$TAG" --title "\$TAG" \$notes --verify-tag
 
+      - name: Hold pull requests until the next version
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        # Anything merged now would be noted under a version already out. Each
+        # open pull request's changelog check runs again, sees the release and
+        # refuses it — until \`fg-dist release\` starts the next version and the
+        # branch catches up with it.
+        run: pnpm run changelog hold
+
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\`." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`fg-dist release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
   ...changelogWorkflow({ submodules: true }),
 })
@@ -411,9 +441,10 @@ jobs:
             pnpm install --no-frozen-lockfile
           fi
 
-      # Only where fg-dist is developed in this workspace; see publish.yml.
+      # Only where fg-dist is developed in this workspace — its own repository,
+      # where it is the root pnpm otherwise leaves out, or a distribution's.
       - name: Build fg-dist
-        run: pnpm --filter @fairgarden/distribution run --if-present build
+        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build
 
       - name: Check for a line linking this pull request
         run: pnpm run changelog check

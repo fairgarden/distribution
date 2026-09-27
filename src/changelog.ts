@@ -182,6 +182,14 @@ export const moveSection = async (
 const git = (cwd: string, args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
+const attempt = (cwd: string, args: string[]): string | undefined => {
+  try {
+    return git(cwd, args)
+  } catch {
+    return undefined
+  }
+}
+
 export interface ChangelogCheck {
   /** The pull request's number. */
   pullRequest: number
@@ -214,6 +222,27 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
   const { pullRequest, repository, base, distribution, labels = [] } = check
   const server = (check.server ?? 'https://github.com').replace(/\/+$/, '')
   const url = `${server}/${repository}/pull/${pullRequest}`
+
+  // Nothing merges between a release and the start of the next cycle: its
+  // lines would go under a version already out. The release moves main on
+  // straight after publishing, and this runs again once the branch has that.
+  const carried = readVersion(root)
+  if (carried && attempt(root, ['rev-parse', '--verify', '--quiet', `refs/tags/v${carried}`]) !== undefined) {
+    return {
+      ok: false,
+      required: true,
+      message:
+        `This branch is at ${carried}, which is released. Bring it up to date with its base — ` +
+        'the release starts the next version there — and this runs again.',
+    }
+  }
+
+  // Starting the next version is what opens its section; nothing in it is news.
+  const opened = topVersion(attempt(root, ['show', `${base}:${CHANGELOG}`]) ?? '')
+  const current = topVersion(existsSync(path.join(root, CHANGELOG)) ? readFileSync(path.join(root, CHANGELOG), 'utf8') : '')
+  if (current && opened && current !== opened) {
+    return { ok: true, required: false, message: `This starts ${current}, so it needs no line of its own.` }
+  }
 
   if (labels.includes(SKIP_LABEL)) {
     return { ok: true, required: false, message: `Labelled "${SKIP_LABEL}", so no entry is needed.` }
@@ -341,3 +370,90 @@ export const bumpEntry = (
  */
 export const aheadEntry = (name: string, change: string, link?: { text: string; url: string }): string =>
   `\`${name}\` ahead of its next release: ${change}${link ? ` ([${link.text}](${link.url}))` : ''}`
+
+/** An open pull request, as `gh pr list` has it. */
+export interface OpenPullRequest {
+  number: number
+  headRefOid: string
+}
+
+/** A run of the changelog check, as `gh run list` has it, newest first. */
+export interface CheckRun {
+  databaseId: number
+  headSha: string
+  event: string
+  status: string
+}
+
+export interface Hold {
+  pullRequest: number
+  /** The run to go again, or undefined when none has run on its head yet. */
+  run: number | undefined
+  /** Whether it is still going, and has to finish before it can run again. */
+  running: boolean
+}
+
+/**
+ * Which check to run again for each open pull request: the latest on its
+ * head commit. One with none yet needs nothing — its first run sees the
+ * release.
+ */
+export const holdsFor = (pullRequests: OpenPullRequest[], runs: CheckRun[]): Hold[] =>
+  pullRequests.map((pullRequest) => {
+    const run = runs.find(
+      (candidate) => candidate.event === 'pull_request' && candidate.headSha === pullRequest.headRefOid
+    )
+    return { pullRequest: pullRequest.number, run: run?.databaseId, running: run !== undefined && run.status !== 'completed' }
+  })
+
+const gh = (cwd: string, args: string[]): string =>
+  execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+
+export interface HoldResult extends Hold {
+  held: boolean
+  /** Why it was not, when it was not. */
+  problem?: string
+}
+
+/**
+ * Hold open pull requests until the next version starts, straight after a
+ * release: each one's changelog check runs again, finds the version its branch
+ * is at released, and refuses it. Merging the pull request that starts the next
+ * version lets them through again, once each has caught up with it.
+ *
+ * Needs `gh`, and a token that may re-run workflows (`actions: write`).
+ */
+export const holdPullRequests = (
+  root: string,
+  { base, workflow = 'changelog.yml' }: { base: string; workflow?: string }
+): HoldResult[] => {
+  const pullRequests = JSON.parse(
+    gh(root, ['pr', 'list', '--base', base, '--state', 'open', '--limit', '200', '--json', 'number,headRefOid'])
+  ) as OpenPullRequest[]
+  if (pullRequests.length === 0) return []
+  const runs = JSON.parse(
+    gh(root, [
+      'run', 'list', '--workflow', workflow, '--event', 'pull_request', '--limit', '500',
+      '--json', 'databaseId,headSha,event,status',
+    ])
+  ) as CheckRun[]
+
+  return holdsFor(pullRequests, runs).map((hold) => {
+    if (hold.run === undefined) return { ...hold, held: true }
+    try {
+      // A run still going cannot be run again until it is done.
+      if (hold.running) {
+        try {
+          gh(root, ['run', 'watch', String(hold.run), '--interval', '10'])
+        } catch {
+          // It failing is fine; it only has to have finished.
+        }
+      }
+      gh(root, ['run', 'rerun', String(hold.run)])
+      return { ...hold, held: true }
+    } catch (error) {
+      const stderr = error instanceof Error && 'stderr' in error ? String(error.stderr).trim() : String(error)
+      return { ...hold, held: false, problem: stderr }
+    }
+  })
+}

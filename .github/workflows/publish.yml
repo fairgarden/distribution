@@ -84,6 +84,8 @@ jobs:
     permissions:
       contents: write # Required for pushing the tag and creating the release
       id-token: write # Required for provenance and trusted publishing
+      actions: write # Required to run open pull requests' changelog check again
+      pull-requests: read # Required to find them
     environment:
       name: npm-publish
     steps:
@@ -131,6 +133,17 @@ jobs:
           fi
           gh release create "$TAG" --title "$TAG" $notes --verify-tag
 
+      - name: Hold pull requests until the next version
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Anything merged now would be noted under a version already out. Each
+        # open pull request's changelog check runs again, sees the release and
+        # refuses it — until `fg-dist release` starts the next version and the
+        # branch catches up with it.
+        run: pnpm run changelog hold
+
       - name: Summary
         run: |
           echo "Published \`@fairgarden/distribution@${{ steps.version.outputs.version }}\` to the \`${{ inputs.dist-tag }}\` tag." >> "$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \`fg-dist release\` and merge what it opens." >> "$GITHUB_STEP_SUMMARY"

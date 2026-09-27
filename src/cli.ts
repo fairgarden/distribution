@@ -33,6 +33,7 @@ import {
   bumpEntry,
   checkChangelog,
   crossedReleases,
+  holdPullRequests,
   CHANGELOG,
   moduleLabel,
   noteInDistribution,
@@ -85,6 +86,7 @@ Commands:
   unfork <name>        Go back to the upstream a fork came from, once it has the fork's work
   changelog check      Fail a pull request that adds no changelog line linking itself (CI)
   changelog notes [v]  Print a version's changelog section, for its release notes
+  changelog hold       Hold open pull requests until the next version starts (CI, after a release)
   policy build         Build the organization's policy: policies/, on every module's own
   policy test          Test each module's rules, then the organization's on top of them
   policy use           Put the built policy beside this service, for it to run
@@ -97,6 +99,8 @@ Options:
   --patch              Release the next patch, staying on this line (release)
   --id <name>          Prerelease identifier: alpha, beta, rc (release, prerelease)
   --stable             A distribution's release leaves its prerelease stages (release)
+  --next <how>         prerelease, alpha, beta, rc, patch, minor, major or stable (release)
+  --direct             Commit main's move on where this runs and push it, no pull request (release)
   --no-fetch           Use the refs already fetched (sync, bump)
   --dry-run            Report what would change without changing it
   --check              Verify instead of writing (readme, release, overrides)
@@ -148,6 +152,7 @@ interface Args {
   stable: boolean
   pr: number | undefined
   repo: string | undefined
+  direct: boolean
 }
 
 const parseArgs = (argv: string[]): Args => {
@@ -179,6 +184,7 @@ const parseArgs = (argv: string[]): Args => {
     stable: false,
     pr: undefined,
     repo: undefined,
+    direct: false,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -222,6 +228,23 @@ const parseArgs = (argv: string[]): Args => {
       args.force = true
     } else if (arg === '--no-push') {
       args.push = false
+    } else if (arg === '--direct') {
+      args.direct = true
+    } else if (arg === '--next') {
+      // How main moves on after a release, as the publish workflow is told:
+      // carry on the prerelease, change its stage, or bump.
+      const next = argv[++index]
+      if (next === 'prerelease') {
+        // as it is
+      } else if (next === 'alpha' || next === 'beta' || next === 'rc') {
+        args.id = next
+      } else if (next === 'patch' || next === 'minor' || next === 'major') {
+        args.bump = next
+      } else if (next === 'stable') {
+        args.stable = true
+      } else {
+        throw new Error(`--next is prerelease, alpha, beta, rc, patch, minor, major or stable; not ${next}.`)
+      }
     } else if (arg === '--pr') {
       args.pr = Number(argv[++index])
     } else if (arg === '--repo') {
@@ -728,6 +751,8 @@ const main = async (): Promise<number> => {
         dryRun: args.dryRun,
         id: args.id,
         stable: args.stable,
+        direct: args.direct,
+        push: args.push,
       })
       const verb = args.dryRun ? 'Would move' : 'Moved'
       process.stdout.write(
@@ -736,7 +761,9 @@ const main = async (): Promise<number> => {
           : `${next.published ? `${next.from} is published. ` : `${next.from} was never published. `}` +
               `${verb} ${next.name} to ${next.version}.\n`
       )
-      if (!args.dryRun && next.version !== next.from) {
+      if (next.pushed) {
+        process.stdout.write('Committed and pushed.\n')
+      } else if (!args.dryRun && next.version !== next.from) {
         process.stdout.write(
           `Commit it, then run the publish workflow, which publishes it and tags v${next.version}.\n`
         )
@@ -775,8 +802,19 @@ const main = async (): Promise<number> => {
       id: args.id,
       dryRun: args.dryRun,
       push: args.push,
+      direct: args.direct,
     })
     const { plan } = outcome
+
+    // Straight onto the branch this runs on: what the publish workflow does.
+    if (args.direct && !args.dryRun) {
+      process.stdout.write(
+        `Released ${plan.released}. ${outcome.base} starts ${plan.next.version}` +
+          (plan.maintenance ? `; ${plan.maintenance.branch} maintains ${plan.maintenance.version}` : '') +
+          (outcome.pushed ? '. Pushed.\n' : '. Left local.\n')
+      )
+      return 0
+    }
 
     process.stdout.write(
       `Released ${plan.released}, ` +
@@ -1280,6 +1318,27 @@ const main = async (): Promise<number> => {
       return result.ok ? 0 : 1
     }
 
+    if (action === 'hold') {
+      // The branch just released from: main, or a maintenance branch.
+      const base =
+        args.base ??
+        process.env.GITHUB_REF_NAME ??
+        execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+      const holds = holdPullRequests(root, { base })
+      if (holds.length === 0) {
+        process.stdout.write(`No pull requests are open into ${base}.\n`)
+        return 0
+      }
+      for (const hold of holds) {
+        process.stdout.write(
+          hold.held
+            ? `#${hold.pullRequest}  held${hold.run === undefined ? ', its first check will see the release' : ''}\n`
+            : `#${hold.pullRequest}  could not be held: ${hold.problem}\n`
+        )
+      }
+      return holds.every((hold) => hold.held) ? 0 : 1
+    }
+
     if (action === 'notes') {
       const wanted = version ?? (JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version as string)
       const text = await readFile(path.join(root, CHANGELOG), 'utf8').catch(() => '')
@@ -1292,7 +1351,7 @@ const main = async (): Promise<number> => {
       return 0
     }
 
-    process.stderr.write('changelog needs `check` or `notes`.\n')
+    process.stderr.write('changelog needs `check`, `hold` or `notes`.\n')
     return 1
   }
 

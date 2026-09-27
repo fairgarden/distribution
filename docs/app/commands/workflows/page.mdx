@@ -46,7 +46,7 @@ built, since what a distribution publishes is its manifest and its policy.
 
 | File | For |
 | --- | --- |
-| `.github/workflows/publish.yml` | the canary and release jobs; the release's notes come from the changelog |
+| `.github/workflows/publish.yml` | the canary and release jobs; the release's notes come from the changelog, and main moves on straight after |
 | `.github/workflows/changelog.yml` | the pull request check |
 | `CHANGELOG.md` | where each pull request's line goes, when the module has none |
 | `.github/actions/publish-prepare/action.yml` | install and build, shared by both |
@@ -127,3 +127,24 @@ repository — a pin nobody updates is worse than a tag.
 
 See [Releasing a module](/overview/releasing) for what the versions mean, and
 [`release`](/commands/release) for what happens after a release ships.
+
+## Holding pull requests
+
+Once it has published and tagged, the release job holds every open pull request
+into the branch it released: [`changelog hold`](/commands/changelog#hold) runs
+each one's changelog check again, which finds the version the branch is at
+released and refuses it. [`fg-dist release`](/commands/release) opens the pull
+request that starts the next version; merging it lets the others through, once
+each has caught up with it. The job needs nothing but its own token — `actions:
+write` to run the checks again — and never pushes to main.
+
+For the hold to stop anything merging, main's branch rules need:
+
+- **Require status checks to pass**, with the changelog check among them.
+- **Require branches to be up to date before merging**, or a merge queue, so a
+  pull request runs the check against main's next version before it merges.
+
+A distribution's release job does the same. Its version is not moved for it
+either: when a month has turned before the next release, `fg-dist release`
+dates it — in a pull request, like any other — and the publish check refuses a
+release of a month that is over until then.

@@ -264,6 +264,8 @@ export interface DistributionRelease {
   published: boolean
   /** The version the publish workflow releases next. */
   version: string
+  /** Whether the move was committed and pushed, with `direct`. */
+  pushed: boolean
 }
 
 /**
@@ -282,12 +284,17 @@ export const releaseDistribution = async (
     id,
     stable,
     published: lookup = onNpm,
+    direct = false,
+    push = true,
   }: {
     dryRun?: boolean
     on?: Date
     id?: string
     stable?: boolean
     published?: (spec: string) => string | undefined
+    /** Commit the move where this runs, and push it: what the publish workflow does. */
+    direct?: boolean
+    push?: boolean
   } = {}
 ): Promise<DistributionRelease> => {
   const manifest = JSON.parse(await readFile(manifestPath(root), 'utf8'))
@@ -303,11 +310,24 @@ export const releaseDistribution = async (
   } catch (error) {
     throw new ReleaseError(error instanceof Error ? error.message : String(error))
   }
+  if (direct && !dryRun && isDirtyTracked(root)) {
+    throw new ReleaseError('Tracked files have uncommitted changes. Commit or drop them before moving on.')
+  }
+  let pushed = false
   if (!dryRun && version !== from) {
     await writeVersion(root, version)
     await moveSection(root, from, version, { published })
+    if (direct) {
+      const branch = currentBranch(root)
+      if (!branch) throw new ReleaseError('HEAD is detached. Check out the branch to move on.')
+      commitTracked(root, published ? `Start ${version}` : `Release ${version} this month, not ${from}`)
+      if (push) {
+        run(root, ['push', 'origin', `HEAD:refs/heads/${branch}`])
+        pushed = true
+      }
+    }
   }
-  return { name: manifest.name, from, published, version }
+  return { name: manifest.name, from, published, version, pushed }
 }
 
 /** Read the release the repository is standing on, without changing anything. */
@@ -334,6 +354,13 @@ export interface ReleaseOptions {
   dryRun?: boolean
   /** Push the branches and open the pull request. On by default. */
   push?: boolean
+  /**
+   * Commit main's move to the next version on the branch this runs on, and
+   * push it there, instead of opening a pull request: what the publish
+   * workflow does straight after publishing, so that nothing merges under a
+   * version already released.
+   */
+  direct?: boolean
 }
 
 export interface ReleaseOutcome {
@@ -371,6 +398,54 @@ const commitAll = (root: string, message: string): void => {
 }
 
 /**
+ * Changes to tracked files only. In CI the checkout also has what the job made
+ * — a lockfile it resolved, what it built — none of which a release commits.
+ */
+const isDirtyTracked = (root: string): boolean =>
+  (git(root, ['status', '--porcelain', '--untracked-files=no']) ?? '') !== ''
+
+const commitTracked = (root: string, message: string): void => {
+  run(root, ['add', '-u'])
+  run(root, ['commit', '-m', message])
+}
+
+/** Main moved on where it is, pushed, and any maintenance branch with it. */
+const moveOnDirectly = async (
+  root: string,
+  plan: ReleasePlan,
+  push: boolean
+): Promise<ReleaseOutcome> => {
+  if (isDirtyTracked(root)) {
+    throw new ReleaseError('Tracked files have uncommitted changes. Commit or drop them before moving on.')
+  }
+  const startedOn = currentBranch(root)
+  if (!startedOn) throw new ReleaseError('HEAD is detached. Check out the branch to move on.')
+  if (plan.maintenance && branchExists(root, plan.maintenance.branch)) {
+    throw new ReleaseError(`Branch \`${plan.maintenance.branch}\` already exists.`)
+  }
+
+  const created: string[] = []
+  if (plan.maintenance) {
+    run(root, ['checkout', '-b', plan.maintenance.branch, plan.base])
+    created.push(plan.maintenance.branch)
+    await writeVersion(root, plan.maintenance.version)
+    await recordVersion(root)
+    commitTracked(root, `Open ${plan.maintenance.version} for maintenance`)
+    run(root, ['checkout', startedOn])
+  }
+
+  await writeVersion(root, plan.next.version)
+  await recordVersion(root)
+  commitTracked(root, `Start ${plan.next.version}`)
+
+  if (push) {
+    for (const branch of created) run(root, ['push', '-u', 'origin', branch])
+    run(root, ['push', 'origin', `HEAD:refs/heads/${startedOn}`])
+  }
+  return { plan, base: startedOn, created, pushed: push, pullRequest: undefined }
+}
+
+/**
  * Move a module on from the release it has just published.
  *
  * Two branches come out of it: `v1-6` where 1.6.x is maintained, and a pull
@@ -380,11 +455,12 @@ const commitAll = (root: string, message: string): void => {
  */
 export const release = async (
   root: string,
-  { bump, id, dryRun = false, push = true }: ReleaseOptions = {}
+  { bump, id, dryRun = false, push = true, direct = false }: ReleaseOptions = {}
 ): Promise<ReleaseOutcome> => {
   const plan = await readRelease(root, { bump, id })
 
   if (dryRun) return { plan, base: currentBranch(root) ?? 'HEAD', created: [], pushed: false, pullRequest: undefined }
+  if (direct) return moveOnDirectly(root, plan, push)
 
   // Both branches are cut from what is committed, and the bumps are committed
   // on top. Anything already in the working tree would be swept into them.

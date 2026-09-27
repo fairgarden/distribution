@@ -125,12 +125,37 @@ one shows what it is, which is the whole reason that block exists.
 | `--id <name>` | prerelease identifier: `alpha`, `beta`, `rc` |
 | `--dry-run` | print the branches and their versions, write nothing |
 | `--no-push` | create the branches locally, push nothing, open no pull request |
+| `--direct` | commit main's move where it runs and push it, no pull request |
+| `--next <how>` | how to move on, as the publish workflow is told it |
 
 The pull request is opened with `gh`. If it is not installed the branches are
 still pushed, and it says so rather than pretending.
 
 However it ends, you are left on the branch you started from, at the version
 main still carries — the bump is on a branch, waiting for review.
+
+## Until it merges
+
+The publish workflow holds every open pull request once it has released — see
+[Changelogs](/overview/changelogs#between-a-release-and-the-next-version) — and
+the pull request `release` opens is what lets them through. Nothing else can
+merge until it does, so run it straight after the release.
+
+## Moving on without a pull request
+
+```bash
+fg-dist release --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
+```
+
+`--direct` commits main's move where it runs and pushes it there, rather than
+opening a pull request, committing only files it tracks. `--next` is the same
+choice as the flags, in one word: `prerelease` carries the stage on, `alpha`,
+`beta` and `rc` change it, `patch`, `minor` and `major` bump, and `stable`, for a
+distribution, leaves its stages.
+
+The publish workflow does not use it: a workflow's own token cannot push to a
+protected main. A job given a GitHub App's token, with the app allowed to bypass
+main's rules, could run it straight after releasing.
 
 ## In a distribution
 

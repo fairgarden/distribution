@@ -239,3 +239,34 @@ test('a bump links the notes of every release it takes in, prereleases too', () 
     `\`@fairgarden/id\` 1.3.0 → 1.4.0 ([release notes](${notes('v1.4.0')}))`
   )
 })
+
+test('nothing merges while the version its base is at is already released', () => {
+  const { root, base } = moduleRepo()
+  git(root, ['tag', 'v1.1.0', base])
+  const result = check(root, base, { labels: ['skip changelog'] })
+  assert.equal(result.ok, false)
+  assert.match(result.message, /at 1\.1\.0, which is released/)
+})
+
+test('the pull request that starts the next version needs no line of its own', () => {
+  const { root, base } = moduleRepo()
+  git(root, ['tag', 'v1.1.0', base])
+  const file = path.join(root, 'CHANGELOG.md')
+  commit(
+    root,
+    {
+      'package.json': { name: '@acme/widget', version: '1.2.0' },
+      'CHANGELOG.md': withSection(readFileSync(file, 'utf8'), '1.2.0'),
+    },
+    'Start 1.2.0'
+  )
+  const result = check(root, base)
+  assert.deepEqual([result.ok, result.required], [true, false])
+  assert.match(result.message, /starts 1\.2\.0/)
+})
+
+test('the check builds fg-dist where it is the workspace root, which pnpm filters leave out', async () => {
+  const { changelogWorkflow } = await import('../dist/workflows.js')
+  const workflow = changelogWorkflow({ submodules: false })['.github/workflows/changelog.yml']
+  assert.match(workflow, /pnpm --filter @fairgarden\/distribution --include-workspace-root run --if-present build/)
+})

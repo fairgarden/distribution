@@ -31,6 +31,19 @@ When the version is published, the section is already there, and committed: the
 publish workflow makes it the GitHub release's notes. [`release`](/commands/release)
 then opens the next version's section as it moves main on.
 
+## Between a release and the next version
+
+A pull request merged after a version is released, but before main moves on,
+would put its line under a version already out. So the check refuses any branch
+at a version already released — whatever it contains, label or not — and the
+release job, once it has tagged, runs every open pull request's check again, so
+each of them is refused too. Nothing merges until the pull request that starts
+the next version does; that one needs no line of its own, and passes.
+
+After it merges, each held pull request brings its branch up to date — required,
+in main's branch rules — and runs the check against the new version. One whose
+line is still under the old version fails until it is moved up.
+
 The link is only known once the pull request is open, so the line usually
 follows in a second commit. [`contribute`](/commands/contribute) prints it, the
 link filled in, for you to finish.
