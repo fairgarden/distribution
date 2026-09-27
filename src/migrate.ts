@@ -189,8 +189,9 @@ export const runMigrations = async (
       )
     }
 
-    const pool = await connect(database.url)
+    let pool: Awaited<ReturnType<typeof connect>> | undefined
     try {
+      pool = await connect(database.url)
       if (action.kind === 'status') {
         results.push({ target, database, changed: [], status: await status(pool, target.directory, target) })
       } else if (action.kind === 'rollback') {
@@ -202,7 +203,7 @@ export const runMigrations = async (
     } catch (error) {
       throw new MigrateError(`${target.name}: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      await pool.end()
+      await pool?.end()
     }
   }
   return results

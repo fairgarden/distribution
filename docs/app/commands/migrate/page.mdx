@@ -20,10 +20,11 @@ Migrating: this is a Vercel production build.
 ## In the build
 
 `fg-dist init` gives the root's `build` and `modular:build` a step after
-turbo's, which runs each app's (or the monolith's) `migrate` script:
+turbo's, which runs each app's (or the monolith's) `migrate` script — after the
+[environment check](/commands/env) and the build itself:
 
 ```json
-"build": "turbo run build --filter=./apps/monolith && pnpm --filter=./apps/monolith run --if-present migrate"
+"build": "pnpm --filter=./apps/monolith run --if-present check-env && turbo run build --filter=./apps/monolith && pnpm --filter=./apps/monolith run --if-present migrate"
 ```
 
 After the build, so a build that fails to compile changes nothing. Outside

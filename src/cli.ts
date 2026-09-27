@@ -1099,6 +1099,12 @@ const main = async (): Promise<number> => {
       throw new Error(`${root} has no package.json: run this where an app or a monolith is built.`)
     }
     if (args.status && args.rollback) throw new Error('--status or --rollback, not both.')
+    // How far to roll back means nothing without rolling back — and ignored,
+    // `--steps 2` would migrate forward instead.
+    if (!args.rollback && (args.steps !== undefined || args.to !== undefined)) {
+      throw new Error('--steps and --to say how far to roll back: they need --rollback.')
+    }
+    if (args.steps !== undefined && args.to !== undefined) throw new Error('--steps or --to, not both.')
     if (args.steps !== undefined && !(Number.isInteger(args.steps) && args.steps > 0)) {
       throw new Error('--steps is a whole number of migrations.')
     }
@@ -1687,14 +1693,29 @@ const main = async (): Promise<number> => {
   return 1
 }
 
-/** A question on the terminal, or undefined where there is nobody to ask. */
-const prompt = async (question: string): Promise<string | undefined> => {
+/**
+ * A question on the terminal, or undefined where there is nobody to ask.
+ * With `hidden`, what is typed is not shown: a secret should not sit on the
+ * screen, or in a recording of it.
+ */
+const prompt = async (question: string, { hidden = false } = {}): Promise<string | undefined> => {
   if (!process.stdin.isTTY) return undefined
   const { createInterface } = await import('node:readline/promises')
-  const readline = createInterface({ input: process.stdin, output: process.stderr })
+  const { Writable } = await import('node:stream')
+  let muted = false
+  const output = new Writable({
+    write(chunk, encoding, done) {
+      if (!muted) process.stderr.write(chunk, encoding)
+      done()
+    },
+  })
+  const readline = createInterface({ input: process.stdin, output, terminal: true })
   try {
-    return (await readline.question(question)).trim() || undefined
+    const answer = readline.question(question)
+    muted = hidden
+    return (await answer).trim() || undefined
   } finally {
+    if (hidden) process.stderr.write('\n')
     readline.close()
   }
 }
@@ -1750,6 +1771,7 @@ const envCommand = async (args: Args): Promise<number> => {
 
   const remotes = await remotesOf(distribution, environment, {
     project: (at) => prompt(`Which Vercel project deploys ${at}? `),
+    save: !args.dryRun,
   })
 
   if (action === 'check') {
@@ -1771,7 +1793,9 @@ const envCommand = async (args: Args): Promise<number> => {
         prompt(
           `${requirement.variable} for ${remote.target.project} — ${requirement.declaration.description}` +
             (requirement.declaration.example ? ` (e.g. ${requirement.declaration.example})` : '') +
-            '\n  '
+            (requirement.declaration.sensitive ? ' (not shown as you type)' : '') +
+            '\n  ',
+          { hidden: Boolean(requirement.declaration.sensitive) }
         ),
     })
     const width = pad(plan.planned.map((each) => each.variable))

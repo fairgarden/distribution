@@ -101,8 +101,9 @@ Rotating keeps the current value, so a rotated secret is stored readable rather
 than sensitive; everything else a secret is sensitive. Name variables to rotate
 only those, and the ones tied to them.
 
-Rotate less often than a session lasts is long, or people are signed out:
-monthly is well clear of it.
+A session sealed with a value lasts until the second rotation after it, so
+rotate less often than a session lasts, or people are signed out. Members'
+sessions last 12 hours; monthly is well clear of it.
 
 ```bash
 pnpm dist env workflow

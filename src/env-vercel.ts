@@ -100,7 +100,14 @@ export interface Remote {
 export const remotesOf = async (
   distribution: string,
   environment: string,
-  { project }: { project?: (at: string, deployment: Deployment) => Promise<string | undefined> } = {}
+  {
+    project,
+    save = true,
+  }: {
+    project?: (at: string, deployment: Deployment) => Promise<string | undefined>
+    /** Keep a project it was told about in package.json: not on a dry run. */
+    save?: boolean
+  } = {}
 ): Promise<Remote[]> => {
   const config = readVercelConfig(distribution)
   const remotes: Remote[] = []
@@ -124,7 +131,7 @@ export const remotesOf = async (
     const target = { project: name, scope: config.scope }
     remotes.push({ deployment, at, target, existing: listVariables(target, environment) })
   }
-  if (changed) saveVercelConfig(distribution, config)
+  if (changed && save) saveVercelConfig(distribution, config)
   return remotes
 }
 
@@ -173,12 +180,16 @@ export const planSetup = async (
 ): Promise<SetupPlan> => {
   const groups = groupsOf(everyApp(remotes))
   const values = new Map<string, { value: string; source: string }>()
+  // Tied to a value that is set but cannot be read: nothing set here could be
+  // known to match it.
+  const unreadable = new Map<string, { variable: string; project: string }>()
   // A value one side already has is the one the other has to match.
   for (const remote of remotes) {
     for (const [variable, { value }] of remote.existing) {
-      if (!value) continue
       for (const tied of groups.get(variable) ?? []) {
-        if (tied !== variable) values.set(tied, { value, source: `the same as ${variable}` })
+        if (tied === variable) continue
+        if (value) values.set(tied, { value, source: `the same as ${variable}` })
+        else unreadable.set(tied, { variable, project: remote.target.project })
       }
     }
   }
@@ -192,6 +203,18 @@ export const planSetup = async (
         continue
       }
       let decided = values.get(requirement.variable)
+      const hidden = unreadable.get(requirement.variable)
+      if (!decided && hidden) {
+        // Generating one would leave the two sides disagreeing, and say nothing.
+        plan.unresolved.push({
+          remote,
+          requirement,
+          why:
+            `it has to match ${hidden.variable}, which is sensitive in ${hidden.project}, so its value ` +
+            'cannot be read to copy. Remove that one, and setup sets both alike',
+        })
+        continue
+      }
       if (!decided && declaration.value !== undefined) decided = { value: declaration.value, source: 'as declared' }
       if (!decided && declaration.generate) decided = { value: newSecret(), source: 'generated' }
       if (!decided && ask) {

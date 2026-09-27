@@ -7,6 +7,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { deploymentAt, envApp, missing, requirementsFor } from '../dist/env.js'
+import { remotesOf } from '../dist/env-vercel.js'
 
 process.env.GIT_CONFIG_COUNT = '1'
 process.env.GIT_CONFIG_KEY_0 = 'commit.gpgsign'
@@ -245,6 +246,36 @@ describe('setting up Vercel', () => {
     assert.match(result.stderr, /acme-id {2}ACME_ID_SMTP_URL: nothing to set it to/)
     assert.match(result.stderr, /acme-id {2}ACME_ID_DATABASE_URL: connect Neon/)
     assert.match(result.stderr, /acme-members {2}ACME_MEMBERS_ID_URL: nothing to set it to/)
+  })
+
+  test('will not guess a shared secret the other side keeps unreadable', async () => {
+    const root = distribution({ monolith: false })
+    const vercel = fakeVercel({ 'acme-id': { ACME_ID_SERVICE_MEMBERS_SECRET: { production: { value: 'hidden', sensitive: true } } } })
+    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 1)
+    assert.match(
+      result.stderr,
+      /ACME_MEMBERS_CLIENT_SECRET: it has to match ACME_ID_SERVICE_MEMBERS_SECRET, which is sensitive in acme-id/
+    )
+    assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), undefined)
+  })
+
+  test('a dry run keeps nothing, not even a project it was told', async () => {
+    const root = distribution({ monolith: true })
+    const manifest = path.join(root, 'package.json')
+    json(manifest, { name: '@acme/core' })
+    const before = readFileSync(manifest, 'utf8')
+    const vercel = fakeVercel()
+    const saved = process.env.VERCEL_CLI
+    process.env.VERCEL_CLI = vercel.bin
+    try {
+      const [remote] = await remotesOf(root, 'production', { project: async () => 'acme-core', save: false })
+      assert.equal(remote.target.project, 'acme-core')
+    } finally {
+      if (saved === undefined) delete process.env.VERCEL_CLI
+      else process.env.VERCEL_CLI = saved
+    }
+    assert.equal(readFileSync(manifest, 'utf8'), before)
   })
 
   test('matches a shared secret one side already has', async () => {

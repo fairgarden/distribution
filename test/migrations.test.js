@@ -350,4 +350,28 @@ describe('migrating a monolith', () => {
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /@acme\/id\s+(applied 0000_init|up to date)\s+\(DATABASE_URL\)/)
   })
+
+  test('refuses how far to roll back without rolling back, rather than migrating forward', async () => {
+    const { root } = monolith()
+    const alone = await fgDist(root, ['migrate', '--steps', '2'], { DATABASE_URL: database.url })
+    assert.notEqual(alone.status, 0)
+    assert.match(alone.stderr, /--steps and --to say how far to roll back: they need --rollback/)
+    const both = await fgDist(root, ['migrate', '--rollback', '@acme/id', '--steps', '1', '--to', '0'], { DATABASE_URL: database.url })
+    assert.match(both.stderr, /--steps or --to, not both/)
+  })
+
+  test('says which app a database it could not reach was for', async () => {
+    const { root } = monolith()
+    await assert.rejects(
+      runMigrations(migrationTargets(root), {
+        action: { kind: 'migrate' },
+        env: { DATABASE_URL: 'postgres://nowhere' },
+        connect: async () => {
+          throw new Error('connect ECONNREFUSED')
+        },
+      }),
+      /^MigrateError: @acme\/id: connect ECONNREFUSED|@acme\/id: connect ECONNREFUSED/
+    )
+  })
 })
+
