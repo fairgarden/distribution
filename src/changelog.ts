@@ -237,18 +237,20 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
     }
   }
 
+  const changed = git(root, ['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean)
+
   // Starting the next version is what opens its section; nothing in it is news.
+  // Only when that is all it does: a change that comes with it is still one
+  // someone will want to read about.
   const opened = topVersion(attempt(root, ['show', `${base}:${CHANGELOG}`]) ?? '')
   const current = topVersion(existsSync(path.join(root, CHANGELOG)) ? readFileSync(path.join(root, CHANGELOG), 'utf8') : '')
-  if (current && opened && current !== opened) {
+  if (current && opened && current !== opened && onlyStartsVersion(root, base, changed)) {
     return { ok: true, required: false, message: `This starts ${current}, so it needs no line of its own.` }
   }
 
   if (labels.includes(SKIP_LABEL)) {
     return { ok: true, required: false, message: `Labelled "${SKIP_LABEL}", so no entry is needed.` }
   }
-
-  const changed = git(root, ['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean)
   if (distribution) {
     const policy = changed.filter((file) => file.startsWith('policies/') && !file.startsWith('policies/dist/'))
     if (policy.length === 0) {
@@ -294,6 +296,25 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
   }
   return { ok: true, required: true, message: `${CHANGELOG} has this pull request under ${version}.` }
 }
+
+/**
+ * Whether these changes are only what `next-version` writes: the changelog,
+ * the readme, and the version in package.json.
+ */
+const onlyStartsVersion = (root: string, base: string, changed: string[]): boolean =>
+  changed.every((file) => {
+    if (file === CHANGELOG || /^readme\.md$/i.test(file)) return true
+    if (file !== 'package.json') return false
+    // The version and nothing else: a dependency moved alongside it is a change.
+    const without = (text: string | undefined): string | undefined => {
+      if (text === undefined) return undefined
+      const { version: _version, ...rest } = JSON.parse(text) as Record<string, unknown>
+      return JSON.stringify(rest)
+    }
+    const before = without(attempt(root, ['show', `${base}:package.json`]))
+    const after = without(existsSync(path.join(root, 'package.json')) ? readFileSync(path.join(root, 'package.json'), 'utf8') : undefined)
+    return before !== undefined && before === after
+  })
 
 /** What a GitHub Actions `pull_request` run says about itself. */
 export const pullRequestFromActions = (): Partial<ChangelogCheck> => {
