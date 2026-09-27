@@ -52,7 +52,9 @@ branch's migrations there before the branch is merged.
 Migrations run in the order drizzle-kit's journal lists them, and what has run
 has to be where that starts. A branch merged with a migration earlier in the
 journal than one already applied is refused rather than run after it, against
-a schema it was not written for: generate it again, after them.
+a schema it was not written for: generate it again, after them. Applied ones
+moved about in the journal since they ran are refused too, by rollbacks as well,
+which would otherwise undo them in an order they did not run in.
 
 On Vercel the Build Command has to run the root's `build` — `pnpm build`, the
 default when the Root Directory is the repository — or migrating does not run

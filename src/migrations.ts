@@ -211,6 +211,8 @@ interface AppliedRow {
   tag: string
   hash: string
   applied_at: Date
+  /** Its place in the order they ran, ties sharing one. */
+  position: number | string
 }
 
 /**
@@ -252,7 +254,9 @@ const readApplied = async (client: MigrationClient, table: string): Promise<Map<
   // No journal yet: nothing has run.
   const { rows: found } = await client.query('select to_regclass($1) is not null as exists', [quoted(table)])
   if (!found[0]?.exists) return new Map()
-  const { rows } = await client.query(`select tag, hash, applied_at from ${quoted(table)}`)
+  const { rows } = await client.query(
+    `select tag, hash, applied_at, rank() over (order by applied_at) as position from ${quoted(table)}`
+  )
   return new Map((rows as AppliedRow[]).map((row) => [row.tag, row]))
 }
 
@@ -329,11 +333,30 @@ const refuseGaps = (migrations: Migration[], applied: Map<string, AppliedRow>): 
   }
 }
 
+/**
+ * What ran has to be in the history in the order it ran. Entries moved about
+ * would be rolled back in an order they did not run in, and the rest run
+ * against a schema made in another.
+ */
+const refuseReordered = (migrations: Migration[], applied: Map<string, AppliedRow>): void => {
+  const ran = migrations.filter((migration) => applied.has(migration.tag))
+  const position = (migration: Migration) => Number(applied.get(migration.tag)!.position)
+  for (let index = 1; index < ran.length; index++) {
+    if (position(ran[index]) < position(ran[index - 1])) {
+      throw new Error(
+        `${ran[index].tag} ran before ${ran[index - 1].tag}, but the history now puts it after. ` +
+          'Put them back in the order they ran.'
+      )
+    }
+  }
+}
+
 export const migrate = (pool: MigrationPool, directory: string, journal: Journal): Promise<string[]> =>
   withLock(pool, journal, { writes: true }, async (client) => {
     const migrations = readMigrations(directory)
     const applied = await readApplied(client, journal.table)
     refuseNewer(migrations, applied)
+    refuseReordered(migrations, applied)
     refuseGaps(migrations, applied)
     for (const migration of migrations) {
       const row = applied.get(migration.tag)
@@ -348,7 +371,8 @@ export const migrate = (pool: MigrationPool, directory: string, journal: Journal
     for (const migration of migrations.filter((migration) => !applied.has(migration.tag))) {
       await inTransaction(client, async () => {
         for (const statement of migration.up) await client.query(statement)
-        await client.query(`insert into ${quoted(journal.table)} (tag, hash) values ($1, $2)`, [
+        // When it finished, not when its transaction began, so the order is sharp.
+        await client.query(`insert into ${quoted(journal.table)} (tag, hash, applied_at) values ($1, $2, clock_timestamp())`, [
           migration.tag,
           migration.hash,
         ])
@@ -374,6 +398,7 @@ export const rollback = (
     // Rolling back something older underneath them would leave the schema
     // matching neither version.
     refuseNewer(migrations, applied)
+    refuseReordered(migrations, applied)
     const newestFirst = migrations.filter((migration) => applied.has(migration.tag)).reverse()
 
     let targets: Migration[]

@@ -268,11 +268,17 @@ export interface Write {
  * The slot a rotated secret is using in a project, or undefined for one set by
  * hand, or not at all. The pointer says, where it can be read; a team policy
  * may have made it sensitive too, and then the slot set most recently is the
- * one — Vercel says when each was set, sensitive or not.
+ * one — Vercel says when each was set, sensitive or not. With no pointer, no
+ * slot is in use, whatever is in one: a setup that stopped short of pointing
+ * at it left a value nothing ever read.
  */
 export const currentSlot = (existing: Map<string, VercelVariable>, name: string): Slot | undefined => {
-  const pointer = existing.get(pointerVariable(name))?.value?.trim()
+  const variable = existing.get(pointerVariable(name))
+  if (!variable) return undefined
+  const pointer = variable.value?.trim()
   if (pointer === 'A' || pointer === 'B') return pointer
+  // Readable, and naming no slot.
+  if (variable.value !== undefined) return undefined
   const set = SLOTS.filter((slot) => existing.has(slotVariable(name, slot)))
   if (set.length === 0) return undefined
   return set.reduce((newest, slot) =>

@@ -378,9 +378,11 @@ describe('setting up Vercel', () => {
     const setup = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
     // unresolved only for what it cannot know, and nothing it tried failed
     assert.doesNotMatch(setup.stderr, /failed/)
-    const [current] = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
-    assert.ok(current && current !== 'x')
-    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, 'B')
+    // over the value nothing pointed at, which is not kept as one before it
+    const values = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
+    assert.equal(values.length, 1)
+    assert.notEqual(values[0], 'x')
+    assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET_CURRENT').value, 'A')
   })
 
   test('fills in a shared secret one side has by moving both to a new one, reading neither', async () => {
@@ -784,7 +786,10 @@ describe('rotating', () => {
     const set = (value, updatedAt) => ({ production: { value, sensitive: true, updatedAt } })
     const vercel = fakeVercel({ 'acme-core': { ACME_MEMBERS_SECRET: set('by-hand', 0), ACME_MEMBERS_SECRET_A: set('stranded', 1) } })
     await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
-    assert.ok(vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').includes('by-hand'))
+    const [, before, ...rest] = vercel.secret('acme-core', 'ACME_MEMBERS_SECRET')
+    // what is accepted beside the new value is what was in use, and nothing nobody used
+    assert.equal(before, 'by-hand')
+    assert.deepEqual(rest, [])
     await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
     assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET'), undefined)
   })

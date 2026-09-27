@@ -143,6 +143,18 @@ describe('the migrator', () => {
     assert.deepEqual(await tables(database, 'g\\_'), ['g_a', 'g_c', 'g_migrations'])
   })
 
+  test('neither migrates nor rolls back a history moved about since it ran', async () => {
+    const journal = { table: 'o_migrations', lock: 50 }
+    const a = { tag: '0000_a', up: 'create table o_a (id int);', down: 'drop table o_a;' }
+    const b = { tag: '0001_b', up: 'create table o_b (id int);', down: 'drop table o_b;' }
+    const c = { tag: '0002_c', up: 'create table o_c (id int);', down: 'drop table o_c;' }
+    await migrate(database.pool, folder([a, b]), journal)
+    const moved = folder([b, a, c])
+    await assert.rejects(migrate(database.pool, moved, journal), /0000_a ran before 0001_b, but the history now puts it after/)
+    await assert.rejects(rollback(database.pool, moved, journal), /0000_a ran before 0001_b/)
+    assert.deepEqual(await tables(database, 'o\\_'), ['o_a', 'o_b', 'o_migrations'])
+  })
+
   test('rolls nothing back under migrations only a newer version knows', async () => {
     const journal = { table: 'n_migrations', lock: 46 }
     const newer = folder([
