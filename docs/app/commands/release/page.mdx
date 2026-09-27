@@ -1,7 +1,7 @@
 # `release`
 
 ```bash
-fg-dist release --patch | --minor | --major [--dry-run] [--no-push]
+pnpm release --patch | --minor | --major [--dry-run] [--no-push]
 ```
 
 Moves a module on from the release it has just published.
@@ -31,7 +31,7 @@ Which way does main move on?
   --minor  1.7.0    v1-6 keeps 1.6.x
   --major  2.0.0    v1-6 keeps 1.6.x
 
-Or `fg-dist prerelease --major` to start the next line beside main, without
+Or `pnpm dist prerelease --major` to start the next line beside main, without
 moving main off this one.
 ```
 
@@ -88,9 +88,9 @@ someone is still running and needs a fix for, so it only moves forward — and
 because there is only one way to go, no flag is needed:
 
 ```bash
-fg-dist release              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
-fg-dist release --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
-fg-dist release --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
+pnpm release              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
+pnpm release --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
+pnpm release --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
 ```
 
 `--id` starts a new identifier when the version is not already on it, and counts
@@ -144,7 +144,7 @@ merge until it does, so run it straight after the release.
 ## Moving on without a pull request
 
 ```bash
-fg-dist release --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
+pnpm release --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
 ```
 
 `--direct` commits main's move where it runs and pushes it there, rather than
@@ -160,7 +160,7 @@ main's rules, could run it straight after releasing.
 ## In a distribution
 
 ```bash
-fg-dist release [--id <alpha|beta|rc>] [--stable] [--dry-run]
+pnpm release [--id <alpha|beta|rc>] [--stable] [--dry-run]
 ```
 
 A distribution is versioned `YY.MM.NN` — see

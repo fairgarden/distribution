@@ -1,10 +1,22 @@
 # Commands
 
+A repository fg-dist sets up — a distribution from [`init`](/commands/init),
+a module given its workflows by [`workflows`](/commands/workflows) — has it as a
+devDependency and a `dist` script, so every command runs the same way:
+
 ```bash
-pnpm add -D @fairgarden/distribution   # provides fg-dist
+pnpm dist sync
+pnpm dist bump
+pnpm dist verify
 ```
 
-Or run without installing: `pnpx @fairgarden/distribution <command>`.
+The binary itself is `fg-dist`, which pnpm does not put on the PATH. Anywhere
+else, add it first, or run it without installing:
+
+```bash
+pnpm add -D @fairgarden/distribution   # then "dist": "fg-dist" in scripts
+pnpx @fairgarden/distribution <command>
+```
 
 ## Setting up
 
@@ -19,6 +31,7 @@ Or run without installing: `pnpx @fairgarden/distribution <command>`.
 - [`check`](/commands/check) — fail when this ships older than what it extends
 - [`inherit`](/commands/inherit) — ship what the distribution this extends ships
 - [`readme`](/commands/readme) — write the module versions into the readmes
+- [`verify`](/commands/verify) — fail when a file fg-dist writes is out of date, for CI
 - [`use-https`](/commands/use-https) — rewrite ssh submodule urls
 - [`overrides`](/commands/overrides) — resolve modules from the tree, not the registry
 
@@ -36,7 +49,7 @@ See [Forking a module](/overview/forking).
 
 ## Releasing a module
 
-- [`workflows`](/commands/workflows) — give every module a publishing workflow and a changelog check
+- [`workflows`](/commands/workflows) — give every module a publishing workflow, a changelog check and `verify`
 - [`changelog`](/commands/changelog) — check a pull request has its line; print a version's notes
 - [`canary`](/commands/canary) — stamp a canary version, for CI
 - [`release`](/commands/release) — open the next version on main, and a maintenance branch behind it

@@ -20,7 +20,7 @@ run, one thing to deploy.
 ## Separate deployments
 
 ```bash
-fg-dist init distribution enterprise --name @acme/enterprise --separate
+pnpm dist init distribution enterprise --name @acme/enterprise --separate
 ```
 
 Scaffolds a distribution with no monolith app at all. Modules still land under
@@ -49,4 +49,4 @@ such config simply has none.
 
 A monolith build checks the [extension floor](/overview/extending) before it
 starts. With no monolith there is no such build, so run
-[`fg-dist check`](/commands/check) in CI instead.
+[`pnpm dist check`](/commands/check) in CI instead.

@@ -3,7 +3,7 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
 import { isPublic } from './canary.ts'
-import { writeReadmes } from './readme.ts'
+import { writeOwnVersion, writeReadmes } from './readme.ts'
 import { moveSection, openSection } from './changelog.ts'
 import {
   assertCalendarVersion,
@@ -163,7 +163,7 @@ export const planPrerelease = (
   }
   if (parsed.prerelease.length > 0) {
     throw new ReleaseError(
-      `${current} is already a prerelease. Move it along with \`fg-dist release\` instead.`
+      `${current} is already a prerelease. Move it along with \`pnpm release\` instead.`
     )
   }
 
@@ -250,8 +250,8 @@ const writeVersion = async (root: string, version: string): Promise<void> => {
 const assertModule = (root: string): void => {
   if (isDistribution(root)) {
     throw new ReleaseError(
-      'This is a distribution, not a module. Its version is YY.MM.NN, which `fg-dist release` ' +
-        'moves on; release its modules individually, then `fg-dist bump` to take them.'
+      'This is a distribution, not a module. Its version is YY.MM.NN, which `pnpm release` ' +
+        'moves on; release its modules individually, then `pnpm dist bump` to take them.'
     )
   }
 }
@@ -316,6 +316,7 @@ export const releaseDistribution = async (
   let pushed = false
   if (!dryRun && version !== from) {
     await writeVersion(root, version)
+    await writeOwnVersion(root)
     await moveSection(root, from, version, { published })
     if (direct) {
       const branch = currentBranch(root)
@@ -612,7 +613,7 @@ export const checkReleasable = async (
       throw new ReleaseError(
         `${manifest.version} is a release of a month that is over, and it is ` +
           `${String(year).padStart(2, '0')}.${String(month).padStart(2, '0')} now. ` +
-          "Run `fg-dist release`, which moves it to this month's first release, and commit it."
+          "Run `pnpm release`, which moves it to this month's first release, and commit it."
       )
     }
   }
@@ -638,7 +639,7 @@ export const checkReleasable = async (
       `${name}@${version} is already on npm, and ${tag} does not exist here.\n` +
         'If the release job failed after publishing, only the tag is missing:\n' +
         `    git tag ${tag} <the published commit> && git push origin ${tag}\n` +
-        'Otherwise run `fg-dist release` to move on to the next version.'
+        'Otherwise run `pnpm release` to move on to the next version.'
     )
   }
 
@@ -721,7 +722,7 @@ export const startPrerelease = async (
   if (branchExists(root, plan.branch)) {
     throw new ReleaseError(
       `Branch \`${plan.branch}\` already exists. That line has been started; ` +
-        'check it out and use `fg-dist release` to move it along.'
+        'check it out and use `pnpm release` to move it along.'
     )
   }
 

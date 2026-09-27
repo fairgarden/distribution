@@ -31,13 +31,55 @@ export const overridesBlock = (names: string[]): string =>
 
 export class OverridesError extends Error {}
 
+/**
+ * What is inside the block that this did not write.
+ *
+ * pnpm edits pnpm-workspace.yaml itself — `allowBuilds` when a build is
+ * approved, an override of its own from `pnpm audit --fix` — and puts what it
+ * adds wherever it likes, including between the markers. Rewriting the block
+ * wholesale would delete it. So only the module entries are this block's: its
+ * own comment and every `workspace:*` override, which a module removed since
+ * leaves behind. Everything else is kept.
+ */
+const foreign = (inside: string): { keys: string; overrides: string[] } => {
+  const header = new Set(overridesBlock([]).split('\n'))
+  const keys: string[] = []
+  const overrides: string[] = []
+  let inOverrides = false
+
+  for (const line of inside.split('\n')) {
+    if (/^overrides:\s*$/.test(line)) {
+      inOverrides = true
+      continue
+    }
+    if (inOverrides && /^\s/.test(line)) {
+      if (line.trim() !== '' && !/:\s*["']?workspace:\*["']?\s*$/.test(line)) overrides.push(line)
+      continue
+    }
+    inOverrides = false
+    if (!header.has(line)) keys.push(line)
+  }
+
+  return { keys: keys.join('\n').trim(), overrides }
+}
+
 /** Replace the block if it is there, otherwise put one at the end. */
-const splice = (source: string, block: string): string => {
+const splice = (source: string, names: string[]): string => {
   const start = source.indexOf(`${MARKER}\n`)
   const end = source.indexOf(`${MARKER}:end`)
 
   if (start !== -1 && end !== -1) {
-    return source.slice(0, start) + block + source.slice(end + `${MARKER}:end`.length)
+    const kept = foreign(source.slice(start, end))
+    // The block's own lines, with any override pnpm added kept inside it: a
+    // second `overrides:` key would not be valid YAML.
+    const block = overridesBlock(names).replace(
+      `\n${MARKER}:end`,
+      kept.overrides.map((line) => `\n${line}`).join('') + `\n${MARKER}:end`
+    )
+    // pnpm's own settings go above the block, where they no longer look like
+    // part of it.
+    const before = kept.keys ? `${kept.keys}\n\n` : ''
+    return source.slice(0, start) + before + block + source.slice(end + `${MARKER}:end`.length)
   }
 
   // A second `overrides:` key is not a merge, it is a YAML file pnpm will
@@ -50,7 +92,7 @@ const splice = (source: string, block: string): string => {
   }
 
   const separator = source.endsWith('\n') ? '\n' : '\n\n'
-  return `${source}${separator}${block}\n`
+  return `${source}${separator}${overridesBlock(names)}\n`
 }
 
 export interface OverridesResult {
@@ -95,7 +137,7 @@ export const writeOverrides = async (
   if (existing === undefined) return { file, names, changed: false, missing: true }
   if (names.length === 0) return { file, names, changed: false, missing: false }
 
-  const updated = splice(existing, overridesBlock(names))
+  const updated = splice(existing, names)
   if (updated === existing) return { file, names, changed: false, missing: false }
 
   if (!check) await writeFile(file, updated)

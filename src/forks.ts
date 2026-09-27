@@ -154,7 +154,7 @@ export const forkModule = (
   if (fork === upstream) {
     throw new Error(
       `${fork} is where ${submodule.relativePath} was forked from. ` +
-        `Run \`fg-dist unfork ${submodule.name}\` to go back to it.`
+        `Run \`pnpm dist unfork ${submodule.name}\` to go back to it.`
     )
   }
   // Before anything is written: a fork nobody can read is a pin nobody can fetch.

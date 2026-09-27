@@ -157,3 +157,29 @@ test('a submodule with no checkout is refused, not silently dropped', async () =
 
   await assert.rejects(() => writeOverrides(root), /not checked out/)
 })
+
+test("what pnpm writes into the block is kept, and the block's own lines are not", async () => {
+  // As pnpm left fg-core's: settings it added between the markers, and an
+  // override of its own among the modules'.
+  const root = distribution({
+    workspace:
+      WORKSPACE +
+      '\n' +
+      overridesBlock(['@acme/gone', '@acme/id']).replace(
+        'overrides:',
+        "allowBuilds:\n  esbuild: true\n\nminimumReleaseAgeExclude:\n  - '@acme/docs@1.0.0'\n\noverrides:\n  lodash: ^4.17.21"
+      ) +
+      '\n',
+  })
+  await writeOverrides(root)
+
+  const body = read(root)
+  assert.match(body, /^allowBuilds:\n {2}esbuild: true\n\nminimumReleaseAgeExclude:\n {2}- '@acme\/docs@1\.0\.0'\n\n# fg:overrides\n/m)
+  assert.match(body, /^ {2}lodash: \^4\.17\.21$/m)
+  assert.match(body, /^ {2}"@acme\/design": "workspace:\*"$/m)
+  // a module that is no longer here is no longer overridden
+  assert.doesNotMatch(body, /@acme\/gone/)
+  assert.equal(body.match(/^overrides:/gm).length, 1)
+
+  assert.equal((await writeOverrides(root, { check: true })).changed, false)
+})

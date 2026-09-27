@@ -81,7 +81,10 @@ test('a distribution is dated before it is published, and moved on after', async
   const gitmodules = '[submodule "apps/x"]\n\tpath = apps/x\n\turl = https://example.invalid/x.git\n'
   const { root, origin } = released(
     { name: '@acme/core', version: '26.09.01-alpha.0' },
-    { '.gitmodules': gitmodules }
+    {
+      '.gitmodules': gitmodules,
+      'Readme.md': '# @acme/core\n\n<!-- fg:version -->\n\nVersion **26.09.01-alpha.0**\n\n<!-- /fg:version -->\n',
+    }
   )
   const october = new Date('2026-10-02T12:00:00Z')
   const nothing = () => undefined
@@ -89,6 +92,8 @@ test('a distribution is dated before it is published, and moved on after', async
   // September's alpha.0 is out; main moved on to alpha.1, which never went out.
   let next = await releaseDistribution(root, { on: new Date('2026-09-20T12:00:00Z'), direct: true, published: nothing })
   assert.deepEqual([next.version, next.pushed], ['26.09.01-alpha.1', true])
+  // Its readme says so, in the same commit.
+  assert.match(onOrigin(origin, 'main', 'Readme.md'), /Version \*\*26\.09\.01-alpha\.1\*\*/)
 
   // October: what goes out is October's first release, pushed before it is.
   next = await releaseDistribution(root, { on: october, direct: true, published: nothing })

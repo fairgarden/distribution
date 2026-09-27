@@ -1,7 +1,7 @@
 # `sync`
 
 ```bash
-fg-dist sync [name...] [--no-fetch]
+pnpm dist sync [name...] [--no-fetch]
 ```
 
 Reports where each module stands.
@@ -11,8 +11,8 @@ apps/widget      v1.0.0  -> v1.0.1 (patch), v1.1.0 (minor), v2.0.0 (major)
 packages/design  v0.3.0  -> v0.3.1 (patch)
 apps/legacy      untagged  no version tags
 
-2 module(s) have newer versions. Run `fg-dist bump` to take them, or
-`fg-dist bump --major` to include the 1 major upgrade(s).
+2 module(s) have newer versions. Run `pnpm dist bump` to take them, or
+`pnpm dist bump --major` to include the 1 major upgrade(s).
 ```
 
 Each line is a submodule: the version it is pinned at, the newest upgrade of

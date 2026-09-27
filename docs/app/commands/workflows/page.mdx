@@ -1,10 +1,10 @@
 # `workflows`
 
 ```bash
-fg-dist workflows [name...] [--force] [--distribution]
+pnpm dist workflows [name...] [--force] [--distribution]
 ```
 
-Name modules — `fg-dist workflows id members` — to give only those theirs,
+Name modules — `pnpm dist workflows id members` — to give only those theirs,
 leaving the rest, and the distribution's own check, alone.
 
 Gives every module a publishing workflow, so each one can release itself, and a
@@ -47,7 +47,8 @@ built, since what a distribution publishes is its manifest and its policy.
 | File | For |
 | --- | --- |
 | `.github/workflows/publish.yml` | the canary and release jobs; the release's notes come from the changelog, and main moves on straight after |
-| `.github/workflows/changelog.yml` | the pull request check |
+| `.github/workflows/changelog.yml` | the pull request check for a changelog line |
+| `.github/workflows/verify.yml` | the pull request check that what fg-dist writes is current — see [`verify`](/commands/verify) |
 | `CHANGELOG.md` | where each pull request's line goes, when the module has none |
 | `.github/actions/publish-prepare/action.yml` | install and build, shared by both |
 | `package.json` | the release scripts, `@fairgarden/distribution`, `packageManager` |
@@ -58,9 +59,11 @@ something calls `fg-dist`, through a named script:
 ```json
 {
   "scripts": {
+    "dist": "fg-dist",
     "canary": "fg-dist canary",
     "release": "fg-dist release",
-    "release:check": "fg-dist release --check"
+    "release:check": "fg-dist release --check",
+    "changelog": "fg-dist changelog"
   }
 }
 ```
@@ -74,7 +77,14 @@ defines is left alone; it may call the tool differently on purpose.
 that wrote the files — or moved up to it, when a module has an older one, since
 the workflows call commands only this version has and a module's own CI
 resolves it from npm — so a module is pinned to the tool that set it up rather
-than to whatever was current when the template was last edited. The one
+than to whatever was current when the template was last edited.
+
+Run from a checkout of fg-dist rather than an install — a distribution
+developing it, as `@fairgarden/core` does — its version is the one its main is
+working towards, which npm does not have. A module is given the newest tagged
+release instead, and `workflows` says so: anything the workflows run that is
+newer than that release fails in the modules' CI until it is published. Publish
+fg-dist first, then run `workflows` again to move them up. The one
 exception is `@fairgarden/distribution` itself, which cannot depend on being
 published to release itself: its scripts call `node dist/cli.js`.
 
@@ -112,7 +122,7 @@ version that is already in `package.json` — it does not bump anything.
 
 `release:check` refuses if that version is already on npm, which is the common
 mistake: main is meant to carry the next unreleased version, so a release that
-finds its own version published means [`fg-dist release`](/commands/release) has
+finds its own version published means [`pnpm release`](/commands/release) has
 not run yet.
 
 It runs in the `npm-publish` environment, so a review or a wait can be attached
@@ -133,7 +143,7 @@ See [Releasing a module](/overview/releasing) for what the versions mean, and
 Once it has published and tagged, the release job holds every open pull request
 into the branch it released: [`changelog hold`](/commands/changelog#hold) runs
 each one's changelog check again, which finds the version the branch is at
-released and refuses it. [`fg-dist release`](/commands/release) opens the pull
+released and refuses it. [`pnpm release`](/commands/release) opens the pull
 request that starts the next version; merging it lets the others through, once
 each has caught up with it. The job needs nothing but its own token — `actions:
 write` to run the checks again — and never pushes to main.
@@ -145,6 +155,6 @@ For the hold to stop anything merging, main's branch rules need:
   pull request runs the check against main's next version before it merges.
 
 A distribution's release job does the same. Its version is not moved for it
-either: when a month has turned before the next release, `fg-dist release`
+either: when a month has turned before the next release, `pnpm release`
 dates it — in a pull request, like any other — and the publish check refuses a
 release of a month that is over until then.

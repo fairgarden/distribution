@@ -40,7 +40,7 @@ belongs in the module's own readme so nobody has to infer it from the tags.
 The version in `package.json` on main is the one being worked *towards*, not the
 one last published. Main is at `1.7.0` because `1.6.0` is out.
 
-This is what makes [`fg-dist release`](/commands/release) a post-publish step:
+This is what makes [`pnpm release`](/commands/release) a post-publish step:
 once `1.6.0` is on npm, main moves on and `1.6.x` continues somewhere else.
 
 ```
@@ -137,9 +137,9 @@ the page is worth more than a changelog nobody opens.
    not already on npm, publishes it with provenance, tags `v1.6.0`, cuts a GitHub
    release from the changelog, and holds every open pull request: anything merged
    now would be noted under a version already out.
-3. Run [`fg-dist release`](/commands/release) with `--patch`, `--minor` or
+3. Run [`pnpm release`](/commands/release) with `--patch`, `--minor` or
    `--major` — it prints the three and stops if you do not say which. On
    `--minor`: `v1-6` is pushed at `1.6.1`, and a pull request moves main to
    `1.7.0`, opening its changelog section. Merging it lets the held pull
    requests through, once each has caught up with it.
-4. The distribution takes it when it is ready, with [`fg-dist bump`](/commands/bump).
+4. The distribution takes it when it is ready, with [`pnpm dist bump`](/commands/bump).

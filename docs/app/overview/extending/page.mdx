@@ -19,9 +19,9 @@ one being extended.
 ## Starting one
 
 ```bash
-fg-dist init distribution acme --name @acme/core --extends @fairgarden/core
+pnpm dist init distribution acme --name @acme/core --extends @fairgarden/core
 cd acme && pnpm install
-fg-dist inherit
+pnpm dist inherit
 ```
 
 [`inherit`](/commands/inherit) adds every module the parent ships, where the
@@ -50,8 +50,8 @@ ships comes from its published manifest.
 
 ## What enforces it
 
-- [`fg-dist check`](/commands/check) fails, which is what to run in CI.
-- [`fg-dist sync`](/commands/sync) reports it alongside available upgrades.
+- [`pnpm dist check`](/commands/check) fails, which is what to run in CI.
+- [`pnpm dist sync`](/commands/sync) reports it alongside available upgrades.
 - `withMonolith` refuses to build, where the distribution has a monolith.
 
 ```
@@ -69,8 +69,8 @@ An extension reads its parent from npm, so a distribution others extend
 publishes itself:
 
 ```bash
-fg-dist workflows --distribution   # once: the publish workflow, and public on npm
-fg-dist release                    # the version it publishes next, then run the workflow
+pnpm dist workflows --distribution   # once: the publish workflow, and public on npm
+pnpm release                    # the version it publishes next, then run the workflow
 ```
 
 What it publishes is its manifest — recording each module's version, place,

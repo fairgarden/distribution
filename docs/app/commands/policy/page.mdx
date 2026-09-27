@@ -1,10 +1,10 @@
 # `policy`
 
 ```bash
-fg-dist policy build [--out FILE]
-fg-dist policy test
-fg-dist policy use
-fg-dist policy setup [--check]
+pnpm dist policy build [--out FILE]
+pnpm dist policy test
+pnpm dist policy use
+pnpm dist policy setup [--check]
 ```
 
 The organization's policy: `policies/`, on every module's own `policies/`,
@@ -46,7 +46,7 @@ Writes into `turbo.json` what builds the policy once for every service:
   each revision — and the lockfile, when it extends a distribution, whose
   policy is installed. `FG_POLICY_SIGNING_KEY` reaches the build, and changing
   it builds again;
-- for each package whose `build` runs `fg-dist policy use`, a `build` that
+- for each package whose `build` runs `pnpm dist policy use`, a `build` that
   waits for the policy's, with `.policy/**` among its outputs so a cached
   build brings its copy back;
 - for each whose `dev` runs it, a `dev` that waits for the policy's build,

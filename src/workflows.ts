@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
@@ -158,14 +159,14 @@ jobs:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         # Anything merged now would be noted under a version already out. Each
         # open pull request's changelog check runs again, sees the release and
-        # refuses it — until \`fg-dist release\` starts the next version and the
+        # refuses it — until \`pnpm release\` starts the next version and the
         # branch catches up with it.
         run: pnpm run changelog hold
 
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\` to the \\\`\${{ inputs.dist-tag }}\\\` tag." >> "\$GITHUB_STEP_SUMMARY"
-          echo "Pull requests are held until the next version starts: run \\\`fg-dist release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`pnpm release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
 
   '.github/actions/publish-prepare/action.yml': `name: Prepare for publishing
@@ -339,7 +340,7 @@ ${distributionSetup(true)}
       - name: Stamp what it ships
         id: version
         # Refuses when this version is on npm already, or names a month that
-        # is over: \`fg-dist release\` moves the distribution on.
+        # is over: \`pnpm release\` moves the distribution on.
         run: pnpm run release:check
 
       - name: Publish to npm
@@ -376,16 +377,16 @@ ${distributionSetup(true)}
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         # Anything merged now would be noted under a version already out. Each
         # open pull request's changelog check runs again, sees the release and
-        # refuses it — until \`fg-dist release\` starts the next version and the
+        # refuses it — until \`pnpm release\` starts the next version and the
         # branch catches up with it.
         run: pnpm run changelog hold
 
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\`." >> "\$GITHUB_STEP_SUMMARY"
-          echo "Pull requests are held until the next version starts: run \\\`fg-dist release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`pnpm release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
-  ...changelogWorkflow({ submodules: true }),
+  ...checkWorkflows({ submodules: true }),
 })
 
 /**
@@ -397,6 +398,72 @@ ${distributionSetup(true)}
  * before it is released. A distribution is checked out with its submodules,
  * without which its workspace does not install.
  */
+/** Everything a pull request is checked by: its changelog line, and what fg-dist wrote. */
+export const checkWorkflows = ({ submodules }: { submodules: boolean }): Files => ({
+  ...changelogWorkflow({ submodules }),
+  ...verifyWorkflow({ submodules }),
+})
+
+/** Node, pnpm, the workspace and fg-dist: what both checks run on. */
+const checkSetup = `      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
+
+      # Only where fg-dist is developed in this workspace — its own repository,
+      # where it is the root pnpm otherwise leaves out, or a distribution's.
+      - name: Build fg-dist
+        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build`
+
+/**
+ * The pull request check that what fg-dist writes is still true.
+ *
+ * A readme's versions, a distribution's workspace overrides, its turbo tasks
+ * for the policy: each is written from something else, and goes stale when
+ * that moves without it. A distribution's readme says whether each pin is at a
+ * release, so it is checked out with its modules' tags.
+ */
+export const verifyWorkflow = ({ submodules }: { submodules: boolean }): Files => ({
+  '.github/workflows/verify.yml': `name: Verify
+
+# What fg-dist writes into this repository is written from something else —
+# the readme's versions from the manifests${submodules ? ' and the pins, the workspace overrides\n# from the modules, turbo\'s policy tasks from the policy' : ''} — and goes stale when
+# that moves without it. This fails when one no longer says what is true, and
+# names the command that brings it back. Make this job a required status check
+# on main, or it only advises.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Generated files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false${submodules ? "\n          fetch-depth: 0 # every module's tags, which say whether its pin is a release\n          submodules: true" : ''}
+
+${checkSetup}
+
+      - name: Check what fg-dist writes is current
+        run: pnpm run dist verify
+`,
+})
+
 export const changelogWorkflow = ({ submodules }: { submodules: boolean }): Files => ({
   '.github/workflows/changelog.yml': `name: Changelog
 
@@ -427,24 +494,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0 # to compare with what it merges into${submodules ? '\n          submodules: true # a distribution does not install without them' : ''}
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            pnpm install --frozen-lockfile
-          else
-            pnpm install --no-frozen-lockfile
-          fi
-
-      # Only where fg-dist is developed in this workspace — its own repository,
-      # where it is the root pnpm otherwise leaves out, or a distribution's.
-      - name: Build fg-dist
-        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build
+${checkSetup}
 
       - name: Check for a line linking this pull request
         run: pnpm run changelog check
@@ -477,16 +527,63 @@ const readManifest = async (
 const TOOL = '@fairgarden/distribution'
 
 /**
- * This tool's own version, which is what a module is given to release with.
+ * The newest release at or below `own`, given the tags of the repository it
+ * runs from — or `own` itself, when it is released or there are no tags to go
+ * by.
+ *
+ * Installed from npm, fg-dist is a release. Run from a checkout of it — a
+ * distribution developing it, as fg-core does — its version is the one main is
+ * working towards, which npm does not have yet, and a module given it could not
+ * install. A tag is what marks a release, as everywhere else here.
+ */
+export const releasedFloor = (own: string, tags: string[] | undefined): string => {
+  if (!tags || tags.includes(`v${own}`)) return own
+  const released = tags
+    .map((tag) => tag.replace(/^v/, ''))
+    .filter((version) => semver.valid(version) && semver.lte(version, own))
+  return semver.rsort(released)[0] ?? own
+}
+
+/** The version tags of fg-dist's own checkout, or undefined when it is not one. */
+const ownTags = (dir: string): string[] | undefined => {
+  const git = (args: string[]): string | undefined => {
+    try {
+      return execFileSync('git', ['-C', dir, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } catch {
+      return undefined
+    }
+  }
+  // Installed in a distribution's node_modules, the repository git finds is
+  // the distribution's, whose tags are not this package's.
+  const top = git(['rev-parse', '--show-toplevel'])
+  if (!top || realpathSync(top) !== realpathSync(dir)) return undefined
+  return (git(['tag', '--list', 'v*']) ?? '').split('\n').filter(Boolean)
+}
+
+export interface ToolRelease {
+  /** The version of fg-dist running. */
+  own: string
+  /** What a module is given: the newest release at or below it. */
+  floor: string
+}
+
+/**
+ * The fg-dist a module is given to release with.
  *
  * Read rather than written down, so a module is pinned to the CLI that set it
  * up instead of to whatever was current when this file was last edited.
  */
-const toolVersion = async (): Promise<string | undefined> => {
-  const here = path.dirname(fileURLToPath(import.meta.url))
-  const own = await readManifest(path.join(here, '..'))
-  return typeof own?.version === 'string' ? own.version : undefined
+export const toolRelease = async (): Promise<ToolRelease | undefined> => {
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const own = (await readManifest(dir))?.version
+  if (typeof own !== 'string') return undefined
+  return { own, floor: releasedFloor(own, ownTags(dir)) }
 }
+
+const toolVersion = async (): Promise<string | undefined> => (await toolRelease())?.floor
 
 /**
  * The scripts the workflow calls, and a module releases by hand with.
@@ -499,6 +596,9 @@ export const releaseScripts = (packageName: string): Record<string, string> => {
   // The tool cannot depend on itself being published to release itself.
   const cli = packageName === TOOL ? 'node dist/cli.js' : 'fg-dist'
   return {
+    // Every command, as \`pnpm dist <command>\`: the tool is a devDependency,
+    // whose binary nothing puts on the PATH.
+    dist: cli,
     canary: `${cli} canary`,
     release: `${cli} release`,
     'release:check': `${cli} release --check`,
@@ -642,7 +742,7 @@ export const writeWorkflows = async (
     // File by file: a module that publishes already still gets the changelog
     // check it lacks, and what it has is only replaced when forced.
     const written: string[] = []
-    const files = { ...publishWorkflow(name), ...changelogWorkflow({ submodules: false }) }
+    const files = { ...publishWorkflow(name), ...checkWorkflows({ submodules: false }) }
     for (const [relative, contents] of Object.entries(files)) {
       const full = path.join(submodule.path, relative)
       if (existsSync(full) && !force) continue
@@ -758,16 +858,17 @@ const startChangelog = async (root: string, dryRun: boolean): Promise<boolean> =
 }
 
 /**
- * Give the distribution itself the changelog check, for pull requests that
- * change the organization's policy — what else changes in it, fg-dist notes
- * itself. Unlike its publishing, this makes nothing public.
+ * Give the distribution itself its pull request checks: the changelog, for
+ * pull requests that change the organization's policy — what else changes in
+ * it, fg-dist notes itself — and that what fg-dist writes is current. Unlike
+ * its publishing, this makes nothing public.
  */
-export const writeDistributionChangelogCheck = async (
+export const writeDistributionChecks = async (
   root: string,
   { force = false, dryRun = false }: { force?: boolean; dryRun?: boolean } = {}
 ): Promise<WorkflowUpdate> => {
   const written: string[] = []
-  for (const [relative, contents] of Object.entries(changelogWorkflow({ submodules: true }))) {
+  for (const [relative, contents] of Object.entries(checkWorkflows({ submodules: true }))) {
     const full = path.join(root, relative)
     if (existsSync(full) && !force) continue
     if (!dryRun) {
@@ -786,8 +887,9 @@ export const writeDistributionChangelogCheck = async (
     const deps = manifest.dependencies as Record<string, string> | undefined
     const tool = await toolVersion()
     let changed = false
-    if (!scripts.changelog) {
-      scripts.changelog = releaseScripts(String(manifest.name ?? '')).changelog
+    for (const script of ['changelog', 'dist'] as const) {
+      if (scripts[script]) continue
+      scripts[script] = releaseScripts(String(manifest.name ?? ''))[script]
       changed = true
     }
     if (!dev[TOOL] && !deps?.[TOOL] && tool) {

@@ -17,7 +17,7 @@ import {
   withSection,
 } from '../dist/changelog.js'
 import { releaseDistribution } from '../dist/release.js'
-import { writeDistributionChangelogCheck, writeWorkflows } from '../dist/workflows.js'
+import { writeDistributionChecks, writeWorkflows } from '../dist/workflows.js'
 
 process.env.GIT_CONFIG_COUNT = '1'
 process.env.GIT_CONFIG_KEY_0 = 'commit.gpgsign'
@@ -173,20 +173,28 @@ test('workflows gives modules a changelog check and a changelog, and the distrib
   write(root, { '.gitmodules': '[submodule "apps/widget"]\n\tpath = apps/widget\n\turl = https://example.invalid/widget.git\n' })
 
   const [update] = await writeWorkflows(root)
-  assert.deepEqual(update.files, ['.github/actions/publish-prepare/action.yml', '.github/workflows/changelog.yml', 'CHANGELOG.md', 'package.json'])
+  assert.deepEqual(update.files, ['.github/actions/publish-prepare/action.yml', '.github/workflows/changelog.yml', '.github/workflows/verify.yml', 'CHANGELOG.md', 'package.json'])
   assert.equal(readFileSync(path.join(widget, '.github/workflows/publish.yml'), 'utf8'), 'name: Publish\n')
   assert.equal(topVersion(readFileSync(path.join(widget, 'CHANGELOG.md'), 'utf8')), '1.1.0')
   assert.equal(JSON.parse(readFileSync(path.join(widget, 'package.json'), 'utf8')).scripts.changelog, 'fg-dist changelog')
   assert.doesNotMatch(readFileSync(path.join(widget, '.github/workflows/changelog.yml'), 'utf8'), /submodules: true/)
+  // A module's readme says only what its manifest does: no modules, no tags.
+  const moduleVerify = readFileSync(path.join(widget, '.github/workflows/verify.yml'), 'utf8')
+  assert.match(moduleVerify, /run: pnpm run dist verify/)
+  assert.doesNotMatch(moduleVerify, /submodules: true|fetch-depth/)
+  assert.equal(JSON.parse(readFileSync(path.join(widget, 'package.json'), 'utf8')).scripts.dist, 'fg-dist')
 
-  const own = await writeDistributionChangelogCheck(root)
-  assert.deepEqual(own.files, ['.github/workflows/changelog.yml', 'CHANGELOG.md', 'package.json'])
+  const own = await writeDistributionChecks(root)
+  assert.deepEqual(own.files, ['.github/workflows/changelog.yml', '.github/workflows/verify.yml', 'CHANGELOG.md', 'package.json'])
   assert.match(readFileSync(path.join(root, '.github/workflows/changelog.yml'), 'utf8'), /submodules: true/)
+  // Its readme says whether each pin is a release, which takes the modules' tags.
+  assert.match(readFileSync(path.join(root, '.github/workflows/verify.yml'), 'utf8'), /fetch-depth: 0[^\n]*\n\s+submodules: true/)
   const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.scripts.changelog, 'fg-dist changelog')
+  assert.equal(manifest.scripts.dist, 'fg-dist')
   // Checking its changelog makes nothing public.
   assert.equal(manifest.private, true)
-  assert.equal((await writeDistributionChangelogCheck(root)).skipped, true)
+  assert.equal((await writeDistributionChecks(root)).skipped, true)
   assert.ok(existsSync(path.join(root, 'CHANGELOG.md')))
 })
 

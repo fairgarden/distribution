@@ -1,0 +1,45 @@
+name: Verify
+
+# What fg-dist writes into this repository is written from something else —
+# the readme's versions from the manifests — and goes stale when
+# that moves without it. This fails when one no longer says what is true, and
+# names the command that brings it back. Make this job a required status check
+# on main, or it only advises.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Generated files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
+
+      # Only where fg-dist is developed in this workspace — its own repository,
+      # where it is the root pnpm otherwise leaves out, or a distribution's.
+      - name: Build fg-dist
+        run: pnpm --filter @fairgarden/distribution --include-workspace-root run --if-present build
+
+      - name: Check what fg-dist writes is current
+        run: pnpm run dist verify
