@@ -25,14 +25,14 @@ export const CHANGELOG = 'CHANGELOG.md'
 /** Where a pull request that needs no entry — a lockfile bump — says so. */
 export const SKIP_LABEL = 'skip changelog'
 
-const PREAMBLE = `# Changelog
-
-Each version's changes, newest first. The top section is the version being
-worked on: every pull request adds a line to it, linking itself.
-`
-
-/** A new changelog, opened at `version`. */
-export const newChangelog = (version: string): string => `${PREAMBLE}\n## ${version}\n`
+/**
+ * A new changelog, opened at `version`.
+ *
+ * Nothing but the heading: a changelog is for whoever uses a release, and how
+ * lines get into it is for contributors, who hear it from the check that asks
+ * for one.
+ */
+export const newChangelog = (version: string): string => `# Changelog\n\n## ${version}\n`
 
 const HEADING = /^## +(\S+)/
 
@@ -301,7 +301,43 @@ export const repositoryLink = (repository: string): string => {
 /** `v1.2.0` as `1.2.0`, for reading; anything else as it is. */
 export const shown = (version: string): string => version.replace(/^v(?=\d)/, '')
 
-/** A module moved from one release to another, linking the new one's notes. */
-export const bumpEntry = (name: string, from: string, to: string, notes: string | undefined, how?: string): string =>
-  `\`${name}\` ${shown(from)} → ${shown(to)}${how ? `, ${how}` : ''}` +
-  (notes ? ` ([release notes](${notes}))` : '')
+/**
+ * The releases a module moving to `to` takes in, oldest first: every one past
+ * where it was, up to and including `to`, prereleases too. Each release's
+ * notes are its own, so skipping one would hide what it changed.
+ */
+export const crossedReleases = (newer: string[], to: string): string[] => {
+  const crossed = newer
+    .filter((tag) => semver.valid(tag) !== null && semver.lte(tag, to))
+    .sort((a, b) => semver.compare(a, b))
+  return crossed.length > 0 ? crossed : [to]
+}
+
+/** Links to the notes of each release, for a changelog line: one, or each in turn. */
+export const releaseNotesLinks = (repository: string, releases: string[]): string => {
+  const links = releases.flatMap((tag) => {
+    const url = releaseNotesUrl(repository, tag)
+    return url ? [{ version: shown(tag), url }] : []
+  })
+  if (links.length === 0) return ''
+  if (links.length === 1) return ` ([release notes](${links[0].url}))`
+  return ` (release notes: ${links.map((link) => `[${link.version}](${link.url})`).join(', ')})`
+}
+
+/** A module moved from one release to another, linking the notes of each it takes in. */
+export const bumpEntry = (
+  name: string,
+  from: string,
+  to: string,
+  repository: string,
+  releases: string[],
+  how?: string
+): string =>
+  `\`${name}\` ${shown(from)} → ${shown(to)}${how ? `, ${how}` : ''}${releaseNotesLinks(repository, releases)}`
+
+/**
+ * A module shipped ahead of its next release: what the change is, and where it
+ * can be read about — its pull request, or its commit.
+ */
+export const aheadEntry = (name: string, change: string, link?: { text: string; url: string }): string =>
+  `\`${name}\` ahead of its next release: ${change}${link ? ` ([${link.text}](${link.url}))` : ''}`

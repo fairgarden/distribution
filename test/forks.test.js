@@ -140,6 +140,10 @@ test('a fix goes upstream, and once released there the fork goes back to upstrea
   assert.equal(offered.pinnedOn, 'acme-core')
   assert.equal(git(fork, ['rev-parse', 'fix-page']), fix)
   assert.equal(git(fork, ['rev-parse', 'acme-core']), fix)
+  // Noted by what it is, never by the branch it was made on.
+  const noted = notesFor(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), '26.09.01-alpha.0')
+  assert.match(noted, /- `@acme\/widget` ahead of its next release: Fix the page\n/)
+  assert.equal(noted.includes('fix-page'), false)
 
   let state = inspect(module(root))
   assert.equal(state.pushed, true)

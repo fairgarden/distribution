@@ -5,7 +5,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
+  aheadEntry,
+  bumpEntry,
   checkChangelog,
+  crossedReleases,
   newChangelog,
   notesFor,
   renameTop,
@@ -205,4 +208,34 @@ test("moving a module on opens the next version's section, on the branch that mo
   const text = git(root, ['show', `${outcome.created.at(-1)}:CHANGELOG.md`])
   assert.equal(topVersion(text), '1.0.0-alpha.1')
   assert.equal(notesFor(text, '1.0.0-alpha.0'), `- Fix the login ([#42](${PR}))\n`)
+})
+
+test('a change shipped ahead of a release says what it is, and links where it is read about', () => {
+  assert.equal(
+    aheadEntry('@fairgarden/members', 'Referral links expire after 30 days', {
+      text: 'fairgarden/members#12',
+      url: 'https://github.com/fairgarden/members/pull/12',
+    }),
+    '`@fairgarden/members` ahead of its next release: Referral links expire after 30 days ' +
+      '([fairgarden/members#12](https://github.com/fairgarden/members/pull/12))'
+  )
+  assert.equal(aheadEntry('@acme/widget', 'Fix the page'), '`@acme/widget` ahead of its next release: Fix the page')
+})
+
+test('a bump links the notes of every release it takes in, prereleases too', () => {
+  const newer = ['v2.0.0', 'v1.4.0', 'v1.3.0', 'v1.3.0-beta.0']
+  assert.deepEqual(crossedReleases(newer, 'v1.4.0'), ['v1.3.0-beta.0', 'v1.3.0', 'v1.4.0'])
+
+  const id = 'https://github.com/fairgarden/id.git'
+  const notes = (tag) => `https://github.com/fairgarden/id/releases/tag/${tag}`
+  assert.equal(
+    bumpEntry('@fairgarden/id', 'v1.2.0', 'v1.4.0', id, crossedReleases(newer, 'v1.4.0')),
+    '`@fairgarden/id` 1.2.0 → 1.4.0 (release notes: ' +
+      `[1.3.0-beta.0](${notes('v1.3.0-beta.0')}), [1.3.0](${notes('v1.3.0')}), [1.4.0](${notes('v1.4.0')}))`
+  )
+  // One release is one link.
+  assert.equal(
+    bumpEntry('@fairgarden/id', 'v1.3.0', 'v1.4.0', id, ['v1.4.0']),
+    `\`@fairgarden/id\` 1.3.0 → 1.4.0 ([release notes](${notes('v1.4.0')}))`
+  )
 })

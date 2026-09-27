@@ -18,10 +18,18 @@ same commit, since that is what the distribution pins and the pull request's
 branch is deleted once merged. For a module you can push to, both go to its own
 repository.
 
-Once the pull request is open its link is known, so the line the module's
-[changelog check](/commands/changelog) wants is added for it — under the top
-section, titled as the pull request is — committed and pushed. The branch is
-noted in the distribution's changelog, with the pull request.
+Once the pull request is open its link is known, so it prints the line the
+module's [changelog check](/commands/changelog) wants, under the top section,
+link filled in. The words are yours, and review's:
+
+```
+Its changelog check wants a line in apps/id/CHANGELOG.md, under 1.7.0. The words are yours:
+  - What this changes, for someone using it ([#42](https://github.com/fairgarden/id/pull/42))
+Commit it on the branch and push, then run this again to keep the pin current.
+```
+
+The distribution's changelog notes the change by the pull request's title,
+linking it; without one, by the commit's subject, linking the commit.
 
 The checkout has to be on a branch, other than the one the pull request goes
 into, with nothing uncommitted. The pull request is opened with `gh`, filled

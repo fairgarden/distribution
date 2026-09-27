@@ -32,12 +32,12 @@ import { inherit } from './inherit.ts'
 import {
   bumpEntry,
   checkChangelog,
+  crossedReleases,
   CHANGELOG,
   moduleLabel,
   noteInDistribution,
   notesFor,
   pullRequestFromActions,
-  releaseNotesUrl,
 } from './changelog.ts'
 import { buildPolicy, findPolicy, POLICIES, setupTurbo, testPolicy, usePolicy } from './policy.ts'
 import { stampModules } from './manifest.ts'
@@ -1185,7 +1185,13 @@ const main = async (): Promise<number> => {
         moveTo(state.submodule, to)
         noteInDistribution(
           root,
-          bumpEntry(moduleLabel(state.submodule.path).name, from, to, releaseNotesUrl(state.submodule.url, to))
+          bumpEntry(
+            moduleLabel(state.submodule.path).name,
+            from,
+            to,
+            state.submodule.url,
+            crossedReleases(state.available, to)
+          )
         )
         process.stdout.write(`${line}\n`)
         continue
@@ -1342,6 +1348,14 @@ const main = async (): Promise<number> => {
     } else {
       process.stdout.write(
         `Open a pull request from ${result.branch} into ${result.base} on ${describeRemote(result.repository)}.\n`
+      )
+    }
+    if (result.changelog) {
+      process.stdout.write(
+        `\nIts changelog check wants a line in ${result.changelog.file}, under ${result.changelog.version}. ` +
+          'The words are yours:\n' +
+          `  ${result.changelog.line}\n` +
+          'Commit it on the branch and push, then run this again to keep the pin current.\n'
       )
     }
     process.stdout.write(`\nCommit ${modules[0].relativePath} here to ship the change meanwhile.\n`)

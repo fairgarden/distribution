@@ -356,8 +356,9 @@ export const changelogWorkflow = ({ submodules }: { submodules: boolean }): File
 
 # Every pull request says what it changes in CHANGELOG.md, under the version
 # being worked on, with a link to itself — so that version's notes are written,
-# and committed, before it is released. \`fg-dist contribute\` adds the line for
-# you. Make this job a required status check on main, or it only advises.
+# and committed, before it is released: whoever makes the change writes the
+# line, and review sees it with the change. Make this job a required status
+# check on main, or it only advises.
 #
 # A pull request that changes nothing anyone would read about — a lockfile
 # bump — is labelled "skip changelog".

@@ -4,16 +4,17 @@ import path from 'node:path'
 import semver from 'semver'
 import {
   CHANGELOG,
+  aheadEntry,
   bumpEntry,
+  crossedReleases,
   moduleLabel,
   noteInDistribution,
-  releaseNotesUrl,
+  releaseNotesLinks,
   repositoryLink,
   shown,
   topVersion,
-  withEntry,
 } from './changelog.ts'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { describeRemote, toHttps } from './git-url.ts'
 import {
   UPSTREAM,
@@ -198,26 +199,50 @@ export interface ContributeResult {
   compare: string | undefined
   /** The fork's distribution branch, which now holds the pinned commit too. */
   pinnedOn: string | undefined
-  /** Whether a line linking the pull request was added to the module's changelog. */
-  noted?: boolean
+  /**
+   * The line the module's changelog check wants, when the pull request is
+   * open and has none yet: its link filled in, its words left to whoever made
+   * the change, and to review.
+   */
+  changelog?: { file: string; version: string; line: string }
+}
+
+/** A pull request's title, as GitHub has it. */
+const pullRequestTitle = (cwd: string, url: string): string | undefined => {
+  try {
+    return (
+      execFileSync('gh', ['pr', 'view', url, '--json', 'title', '--jq', '.title'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() || undefined
+    )
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * Add a line linking a pull request to a module's changelog, and commit it,
- * unless it has one already. Only for a module that keeps a changelog.
+ * The changelog line a pull request still needs, with its link: only the
+ * words are left, which are the author's to write. Undefined for a module
+ * without a changelog, or one that links the pull request already.
  */
-const noteContribution = (cwd: string, pullRequest: string, title: string): boolean => {
-  const file = path.join(cwd, CHANGELOG)
-  if (!existsSync(file)) return false
+const changelogLine = (
+  submodule: Submodule,
+  pullRequest: string
+): ContributeResult['changelog'] => {
+  const file = path.join(submodule.path, CHANGELOG)
+  if (!existsSync(file)) return undefined
   const text = readFileSync(file, 'utf8')
-  if (text.toLowerCase().includes(pullRequest.replace(/^https?:\/\//, '').toLowerCase())) return false
+  if (text.toLowerCase().includes(pullRequest.replace(/^https?:\/\//, '').toLowerCase())) return undefined
   const version = topVersion(text)
-  if (!version) return false
-  const number = /\/pull\/(\d+)/.exec(pullRequest)?.[1] ?? '?'
-  writeFileSync(file, withEntry(text, version, `${title} ([#${number}](${pullRequest}))`))
-  run(cwd, ['add', CHANGELOG])
-  run(cwd, ['commit', '--quiet', '-m', `Note #${number} in the changelog`])
-  return true
+  const number = /\/pull\/(\d+)/.exec(pullRequest)?.[1]
+  if (!version || !number) return undefined
+  return {
+    file: path.join(submodule.relativePath, CHANGELOG),
+    version,
+    line: `- What this changes, for someone using it ([#${number}](${pullRequest}))`,
+  }
 }
 
 /**
@@ -290,38 +315,31 @@ export const contribute = (
     }
   }
 
-  // The module's changelog needs a line linking the pull request before it
-  // can merge; with the pull request open, its link is known, so add it.
-  let noted = false
-  if (pullRequest) {
-    const title = attempt(cwd, ['log', '-1', '--format=%s'])
-    const fromGh = (() => {
-      try {
-        return execFileSync('gh', ['pr', 'view', pullRequest, '--json', 'title', '--jq', '.title'], {
-          cwd,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim()
-      } catch {
-        return undefined
-      }
-    })()
-    noted = noteContribution(cwd, pullRequest, fromGh || title || branch)
-    if (noted) {
-      run(cwd, ['push', '--quiet', 'origin', branch])
-      if (pinnedOn) pushPinned(submodule, pinnedOn)
-    }
-  }
+  // What the change is, in the distribution's changelog: the pull request's
+  // title, or without one, what its last commit says. Never the branch's name,
+  // which means nothing to anyone reading it.
+  const title =
+    (pullRequest && pullRequestTitle(cwd, pullRequest)) ||
+    attempt(cwd, ['log', '-1', '--format=%s']) ||
+    branch
 
+  // Linked where it can be read about: its pull request, or else its commit.
   const { name } = moduleLabel(cwd)
   const number = pullRequest && /\/pull\/(\d+)/.exec(pullRequest)?.[1]
-  noteInDistribution(
-    root,
-    `\`${name}\` ships \`${branch}\` ahead of its next release` +
-      (pullRequest && upstreamRepo ? `, offered in [${upstreamRepo}#${number}](${pullRequest})` : '')
-  )
+  const tip = attempt(cwd, ['rev-parse', 'HEAD'])
+  const link =
+    pullRequest && upstreamRepo && number
+      ? { text: `${upstreamRepo}#${number}`, url: pullRequest }
+      : ownRepo && tip
+        ? { text: `${ownRepo}@${tip.slice(0, 7)}`, url: `https://github.com/${ownRepo}/commit/${tip}` }
+        : undefined
+  noteInDistribution(root, aheadEntry(name, title, link))
 
-  return { branch, repository, base: into, pullRequest, compare, pinnedOn, noted }
+  // The module's own line is written by whoever made the change, and reviewed
+  // with it; only its link is known here.
+  const changelog = pullRequest ? changelogLine(submodule, pullRequest) : undefined
+
+  return { branch, repository, base: into, pullRequest, compare, pinnedOn, changelog }
 }
 
 export interface Integration {
@@ -352,13 +370,13 @@ export const integrate = (
 
   const { name } = moduleLabel(cwd)
   const from = state.current ?? state.head.slice(0, 7)
-  const notes = releaseNotesUrl(upstream, tag)
+  const releases = crossedReleases(state.available, tag)
 
   if (containsAll(cwd, `refs/tags/${tag}`, state.head)) {
     moveTo(submodule, tag)
     // The fork may not have the release yet, and it is what is pinned now.
     if (push) run(cwd, ['push', '--quiet', 'origin', `refs/tags/${tag}`])
-    noteInDistribution(root, bumpEntry(name, from, tag, notes, 'which has everything the fork added'))
+    noteInDistribution(root, bumpEntry(name, from, tag, upstream, releases, 'which has everything the fork added'))
     return { how: 'moved', pushed: push ? tag : undefined }
   }
 
@@ -382,7 +400,7 @@ export const integrate = (
 
   const branch = distributionBranch(root)
   if (push) pushPinned(submodule, branch)
-  noteInDistribution(root, bumpEntry(name, from, tag, notes, 'merged into the fork'))
+  noteInDistribution(root, bumpEntry(name, from, tag, upstream, releases, 'merged into the fork'))
   return { how: 'merged', pushed: push ? branch : undefined }
 }
 
@@ -492,14 +510,14 @@ export const unforkModule = (
   attempt(cwd, ['remote', 'remove', UPSTREAM])
 
   const { name } = moduleLabel(cwd)
-  const notes = semver.valid(label) ? releaseNotesUrl(upstream, label) : undefined
+  const notes = semver.valid(label) ? releaseNotesLinks(upstream, crossedReleases(state.available, label)) : ''
   noteInDistribution(
     root,
     `\`${name}\` back to ${repositoryLink(upstream)} at ${shown(label)}, ` +
       (lost.length > 0
         ? `leaving behind ${lost.length} commit${lost.length === 1 ? '' : 's'} of the fork's that upstream does not have`
         : 'which has everything the fork added') +
-      (notes ? ` ([release notes](${notes}))` : '')
+      notes
   )
 
   return { url: upstream, to: label }

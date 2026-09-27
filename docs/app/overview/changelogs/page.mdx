@@ -21,7 +21,9 @@ it, linking the pull request:
 ```
 
 A check on every pull request refuses one without its line, under the top
-section — see [`changelog check`](/commands/changelog). A pull request that
+section — see [`changelog check`](/commands/changelog). It checks that the line
+is there and links the pull request, not what it says: the words are written by
+whoever made the change, for the people who will use it, and reviewed with it. A pull request that
 changes nothing anyone would read about, a lockfile bump say, is labelled
 `skip changelog`. Make the check required on main, or it only advises.
 
@@ -29,8 +31,9 @@ When the version is published, the section is already there, and committed: the
 publish workflow makes it the GitHub release's notes. [`release`](/commands/release)
 then opens the next version's section as it moves main on.
 
-[`contribute`](/commands/contribute) adds the line itself once the pull request
-is open, since that is when its link is known.
+The link is only known once the pull request is open, so the line usually
+follows in a second commit. [`contribute`](/commands/contribute) prints it, the
+link filled in, for you to finish.
 
 ## A distribution's
 
@@ -41,17 +44,18 @@ in what it ships as it makes the change:
 ## 26.09.01-alpha.1
 
 - `@fairgarden/id` 1.6.0 → 1.7.0 ([release notes](https://github.com/fairgarden/id/releases/tag/v1.7.0))
+- `@fairgarden/design` 2.1.0 → 2.3.0 (release notes: [2.2.0](https://github.com/fairgarden/design/releases/tag/v2.2.0), [2.3.0](https://github.com/fairgarden/design/releases/tag/v2.3.0))
 - `@fairgarden/members` forked to [acme/members](https://github.com/acme/members), from [fairgarden/members](https://github.com/fairgarden/members)
-- `@fairgarden/members` ships `fix-referrals` ahead of its next release, offered in [fairgarden/members#12](https://github.com/fairgarden/members/pull/12)
+- `@fairgarden/members` ahead of its next release: Referral links expire after 30 days ([fairgarden/members#12](https://github.com/fairgarden/members/pull/12))
 - Members need a referral to join ([#8](https://github.com/acme/core/pull/8))
 ```
 
 | Command | Notes |
 | --- | --- |
-| [`bump`](/commands/bump) | each module moved, linking its release's notes — a fork's, merged in or taken whole |
+| [`bump`](/commands/bump) | each module moved, linking the notes of every release it takes in — each has only its own changes — a fork's, merged in or taken whole |
 | [`add-module`](/commands/add-module), [`inherit`](/commands/inherit) | each module added, and where from |
 | [`fork`](/commands/fork) | the fork, and what it was forked from |
-| [`contribute`](/commands/contribute) | the branch shipped ahead of a release, and its pull request |
+| [`contribute`](/commands/contribute) | a change shipped ahead of a release, by its pull request's title, linking it |
 | [`unfork`](/commands/unfork) | the release it went back to upstream at, and anything left behind |
 
 The one thing people change in a distribution by hand is the organization's
