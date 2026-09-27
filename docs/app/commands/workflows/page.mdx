@@ -4,7 +4,8 @@
 fg-dist workflows [--force] [--distribution]
 ```
 
-Gives every module a publishing workflow, so each one can release itself.
+Gives every module a publishing workflow, so each one can release itself, and a
+[changelog check](/commands/changelog) on its pull requests.
 
 Run it in a distribution. Each module is a separate repository, so the files
 land in each submodule's working tree and are committed and pushed there —
@@ -15,9 +16,15 @@ apps/widget      .github/actions/publish-prepare/action.yml, .github/workflows/p
 packages/design  has one already
 ```
 
-A module that already has a workflow is left alone. It may have been changed on
-purpose, and overwriting it would be the kind of help nobody asked for. Pass
-`--force` to replace them.
+A file a module already has is left alone — it may have been changed on purpose,
+and overwriting it would be the kind of help nobody asked for — so a module that
+publishes already just gains what it lacks. Pass `--force` to replace them. A
+module without a `CHANGELOG.md` gets one, opened at the version it carries; one
+it has is never written over.
+
+In a distribution, the distribution gets the changelog check too — for pull
+requests changing its policy — with its own `CHANGELOG.md`. That makes nothing
+public; `--distribution`, below, is what publishes it.
 
 ## The distribution itself
 
@@ -36,7 +43,9 @@ built, since what a distribution publishes is its manifest and its policy.
 
 | File | For |
 | --- | --- |
-| `.github/workflows/publish.yml` | the canary and release jobs |
+| `.github/workflows/publish.yml` | the canary and release jobs; the release's notes come from the changelog |
+| `.github/workflows/changelog.yml` | the pull request check |
+| `CHANGELOG.md` | where each pull request's line goes, when the module has none |
 | `.github/actions/publish-prepare/action.yml` | install and build, shared by both |
 | `package.json` | the release scripts, `@fairgarden/distribution`, `packageManager` |
 

@@ -18,6 +18,11 @@ same commit, since that is what the distribution pins and the pull request's
 branch is deleted once merged. For a module you can push to, both go to its own
 repository.
 
+Once the pull request is open its link is known, so the line the module's
+[changelog check](/commands/changelog) wants is added for it — under the top
+section, titled as the pull request is — committed and pushed. The branch is
+noted in the distribution's changelog, with the pull request.
+
 The checkout has to be on a branch, other than the one the pull request goes
 into, with nothing uncommitted. The pull request is opened with `gh`, filled
 from the commits; without it, or off GitHub, you get the link to open it by hand.

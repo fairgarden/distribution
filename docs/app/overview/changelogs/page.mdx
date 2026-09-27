@@ -1,0 +1,62 @@
+# Changelogs
+
+A release's notes are written before it is released: every change adds its own
+line as it merges, so when the version goes out there is nothing left to write.
+
+## A module's
+
+Each module keeps a `CHANGELOG.md`. Its top section is the version its main
+carries — the next one to be released — and every pull request adds a line to
+it, linking the pull request:
+
+```markdown
+## 1.7.0
+
+- Sign-in links expire after 15 minutes ([#42](https://github.com/fairgarden/id/pull/42))
+- Passkeys can be renamed ([#45](https://github.com/fairgarden/id/pull/45))
+
+## 1.6.0
+
+- ...
+```
+
+A check on every pull request refuses one without its line, under the top
+section — see [`changelog check`](/commands/changelog). A pull request that
+changes nothing anyone would read about, a lockfile bump say, is labelled
+`skip changelog`. Make the check required on main, or it only advises.
+
+When the version is published, the section is already there, and committed: the
+publish workflow makes it the GitHub release's notes. [`release`](/commands/release)
+then opens the next version's section as it moves main on.
+
+[`contribute`](/commands/contribute) adds the line itself once the pull request
+is open, since that is when its link is known.
+
+## A distribution's
+
+A distribution's changelog is mostly written for it. fg-dist notes what changes
+in what it ships as it makes the change:
+
+```markdown
+## 26.09.01-alpha.1
+
+- `@fairgarden/id` 1.6.0 → 1.7.0 ([release notes](https://github.com/fairgarden/id/releases/tag/v1.7.0))
+- `@fairgarden/members` forked to [acme/members](https://github.com/acme/members), from [fairgarden/members](https://github.com/fairgarden/members)
+- `@fairgarden/members` ships `fix-referrals` ahead of its next release, offered in [fairgarden/members#12](https://github.com/fairgarden/members/pull/12)
+- Members need a referral to join ([#8](https://github.com/acme/core/pull/8))
+```
+
+| Command | Notes |
+| --- | --- |
+| [`bump`](/commands/bump) | each module moved, linking its release's notes — a fork's, merged in or taken whole |
+| [`add-module`](/commands/add-module), [`inherit`](/commands/inherit) | each module added, and where from |
+| [`fork`](/commands/fork) | the fork, and what it was forked from |
+| [`contribute`](/commands/contribute) | the branch shipped ahead of a release, and its pull request |
+| [`unfork`](/commands/unfork) | the release it went back to upstream at, and anything left behind |
+
+The one thing people change in a distribution by hand is the organization's
+policy, in `policies/`. A pull request that changes it needs its own line,
+checked like a module's; any other pull request into the distribution needs
+none. The section is the distribution's version, and
+[`release`](/commands/release#in-a-distribution) opens the next one — or, for a
+release never published when the month turns, renames it.

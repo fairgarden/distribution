@@ -7,6 +7,7 @@ import { repositoryRoot } from './submodules.ts'
 import { readPackageName } from './scaffold.ts'
 import { addMount, ConfigEditError, declaresMonolith } from './config-edit.ts'
 import { toHttps } from './git-url.ts'
+import { noteInDistribution, repositoryLink } from './changelog.ts'
 
 const CONFIG_FILES = [
   'next.config.ts',
@@ -48,6 +49,8 @@ export interface AddModuleOptions {
    * when nothing but a developer's machine will ever clone the submodule.
    */
   ssh?: boolean
+  /** Note the module in the distribution's changelog. On by default. */
+  changelog?: boolean
 }
 
 /**
@@ -217,6 +220,13 @@ export const addModule = async (
   // mount is written by now, so a workspace this cannot edit — a sibling with
   // no checkout, an `overrides:` key someone else wrote — is something to
   // report, not something to fail the whole command over.
+  if (options.changelog !== false && packageName) {
+    noteInDistribution(
+      root,
+      `\`${packageName}\`${version ? ` ${version}` : ''} added, from ${repositoryLink(recorded)}`
+    )
+  }
+
   const overrides = await writeOverrides(repositoryRoot(cwd) ?? cwd).catch(
     (error: unknown) => ({
       changed: false,

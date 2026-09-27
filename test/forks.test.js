@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { contribute, forkModule, integrate, unforkModule } from '../dist/forks.js'
 import { writeReadmes } from '../dist/readme.js'
+import { notesFor } from '../dist/changelog.js'
 import { inspect, submodules } from '../dist/submodules.js'
 
 // Reach the git processes the code under test spawns: no signing, local
@@ -63,7 +64,7 @@ const setup = () => {
   const root = path.join(base, 'dist')
   mkdirSync(root)
   git(root, ['init', '-q', '-b', 'main'])
-  write(root, { 'package.json': JSON.stringify({ name: '@acme/core' }) })
+  write(root, { 'package.json': JSON.stringify({ name: '@acme/core', version: '26.09.01-alpha.0' }) })
   git(root, ['submodule', 'add', '-q', upstream, 'apps/widget'])
   git(path.join(root, 'apps/widget'), ['checkout', '-q', 'v1.0.0'])
   git(root, ['add', '-A'])
@@ -232,4 +233,24 @@ test('contribute wants a branch and a clean checkout', () => {
   git(widget, ['switch', '-q', '-c', 'change'])
   write(widget, { 'app/page.tsx': 'dirty\n' })
   assert.throws(() => contribute(root, module(root)), /uncommitted changes/)
+})
+
+test("the distribution's changelog notes forking, taking releases, and going back", () => {
+  const { root, upstream, fork, widget, work, release } = setup()
+  const notes = () => notesFor(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), '26.09.01-alpha.0')
+
+  forkModule(root, module(root), fork)
+  assert.match(notes(), new RegExp(`- \`@acme/widget\` forked to ${fork}, from ${upstream}\n`))
+
+  commit(widget, { 'lib/ours.ts': 'export {}\n' }, 'Ours')
+  release({ 'app/page.tsx': 'export default 3\n' }, '1.1.0')
+  integrate(root, inspect(module(root)), 'v1.1.0')
+  assert.match(notes(), /- `@acme\/widget` 1\.0\.0 → 1\.1\.0, merged into the fork\n/)
+
+  // Upstream takes our commit, and releases it.
+  git(work, ['fetch', '-q', fork, 'acme-core'])
+  git(work, ['merge', '-q', 'FETCH_HEAD'])
+  release({}, '1.2.0')
+  unforkModule(root, inspect(module(root)))
+  assert.match(notes(), new RegExp(`- \`@acme/widget\` back to ${upstream} at 1\.2\.0, which has everything the fork added\n`))
 })

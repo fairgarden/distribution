@@ -1,0 +1,39 @@
+# `changelog`
+
+```bash
+fg-dist changelog check [--pr <number> --base <ref> --repo <owner/name>]
+fg-dist changelog notes [version]
+```
+
+See [Changelogs](/overview/changelogs) for how they are kept.
+
+## `check`
+
+Fails a pull request that has not added a line to `CHANGELOG.md` linking itself,
+under the top section — the version being worked on. In a distribution only a
+pull request that changes `policies/` needs one.
+
+```
+CHANGELOG.md has no line linking this pull request.
+Add a line to CHANGELOG.md, under 1.7.0, that links this pull request:
+
+- What this changes, for someone using it ([#42](https://github.com/fairgarden/id/pull/42))
+
+Or label the pull request "skip changelog" if it changes nothing anyone would read about.
+```
+
+It runs in the `changelog.yml` workflow that [`workflows`](/commands/workflows)
+writes, and reads the pull request from GitHub Actions: its number, what it
+merges into, its labels. Elsewhere, name them.
+
+| Option | Meaning |
+| --- | --- |
+| `--pr <number>` | the pull request |
+| `--base <ref>` | what it merges into, such as `origin/main` |
+| `--repo <owner/name>` | the repository its link names |
+
+## `notes`
+
+Prints a version's section, without its heading — the version in `package.json`
+unless one is named, spelled either way for a distribution. The publish workflow
+makes it the GitHub release's notes, and uses GitHub's own when there is none.

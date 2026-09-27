@@ -5,6 +5,7 @@ import path from 'node:path'
 import { addModule } from './add-module.ts'
 import { readDistribution } from './extends.ts'
 import { readPublishedModules, type PublishedModule } from './manifest.ts'
+import { noteInDistribution, repositoryLink } from './changelog.ts'
 import { ensureUpstreamRemote, gitmodulesSet, submodules } from './submodules.ts'
 
 /**
@@ -84,7 +85,7 @@ export const inherit = async (
     inheritance.added.push({ name, ...module })
     if (dryRun) continue
 
-    await addModule(root, module.repository, { at: module.path })
+    await addModule(root, module.repository, { at: module.path, changelog: false })
 
     // What the parent pins, which may be past the release its version names.
     if (git(target, ['checkout', '--quiet', module.commit]) === undefined) {
@@ -103,6 +104,12 @@ export const inherit = async (
         ensureUpstreamRemote(target, module.upstream)
       }
     }
+
+    noteInDistribution(
+      root,
+      `\`${name}\` ${module.version} added, as ${own.extends} ships it, from ${repositoryLink(module.repository)}` +
+        (module.upstream ? `, a fork of ${repositoryLink(module.upstream)}` : '')
+    )
   }
 
   return inheritance
