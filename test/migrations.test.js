@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -328,6 +328,15 @@ describe('migrating a monolith', () => {
     ])
     assert.deepEqual(await tables(database, 'mid\\_'), ['mid_accounts', 'mid_migrations'])
     assert.deepEqual(await tables(database, 'mmembers\\_'), ['mmembers_members', 'mmembers_migrations'])
+  })
+
+  test('migrates its own too, when it has any, beside the apps it mounts', () => {
+    const { root } = monolith()
+    const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+    manifest.fairgarden = { migrations: { directory: 'drizzle', table: 'mono_migrations', lock: 13, database: ['DATABASE_URL'] } }
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify(manifest))
+    writeFileSync(path.join(root, 'next.config.ts'), "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n")
+    assert.deepEqual(migrationTargets(root).map((target) => target.name), ['mono', '@acme/id', '@acme/members'])
   })
 
   test('a build on a host with nowhere else to put it has to have a database', async () => {

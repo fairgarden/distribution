@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { declaredMigrations, type Migrations } from './migrations.ts'
 import { pointerVariable, SLOTS, slotVariable } from './secrets.ts'
-import { packageDir } from './packages.ts'
-import { submodules } from './submodules.ts'
+import { composesApps, packageDir } from './packages.ts'
+import { submodules, uninitialised } from './submodules.ts'
 
 /**
  * What a deployment needs in its environment, from what its apps declare.
@@ -153,8 +153,10 @@ export const deploymentAt = (root: string): Deployment => {
   const manifest = readManifest(root)
   const name = typeof manifest?.name === 'string' ? manifest.name : root
   const own = envApp(root)
-  if (own) return { name, root, apps: [own] }
-  const apps: EnvApp[] = []
+  // An app deploys itself. A monolith deploys every app it mounts — and
+  // itself, when it declares anything too.
+  if (own && !composesApps(root)) return { name, root, apps: [own] }
+  const apps: EnvApp[] = own ? [own] : []
   for (const dependency of Object.keys((manifest?.dependencies as Record<string, string>) ?? {})) {
     const dir = packageDir(root, dependency)
     const app = dir ? envApp(dir) : undefined
@@ -168,6 +170,15 @@ export const deploymentAt = (root: string): Deployment => {
  * app; otherwise each app on its own, a project each.
  */
 export const distributionDeployments = (distribution: string): Deployment[] => {
+  // A module not checked out says nothing about what it needs, and would be
+  // passed over as if it needed nothing.
+  const absent = uninitialised(distribution)
+  if (absent.length > 0) {
+    throw new Error(
+      `These submodules are not checked out, so what they need cannot be read: ${absent.join(', ')}.\n` +
+        'Run `git submodule update --init` first.'
+    )
+  }
   const monolith = path.join(distribution, 'apps', 'monolith')
   if (existsSync(path.join(monolith, 'package.json'))) return [deploymentAt(monolith)]
   return submodules(distribution)

@@ -8,8 +8,8 @@ pnpm dist migrate --rollback <name> [--steps N | --to TAG]
 
 Migrates the databases of what is deployed from here. Run where an app is
 built, it migrates that app. Run where a monolith is built, it migrates every
-app the monolith depends on that declares migrations — each into the database
-that app uses, which may be the same one.
+app the monolith depends on that declares migrations — and the monolith's own,
+if it has any — each into the database that app uses, which may be the same one.
 
 ```
 Migrating: this is a Vercel production build.

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { execFile, execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { deploymentAt, envApp, missing, requirementsFor } from '../dist/env.js'
-import { remotesOf } from '../dist/env-vercel.js'
+import { deploymentAt, distributionDeployments, envApp, missing, requirementsFor } from '../dist/env.js'
+import { assertTies, planRotation, remotesOf } from '../dist/env-vercel.js'
 import { secretValues } from '../dist/secrets.js'
 
 process.env.GIT_CONFIG_COUNT = '1'
@@ -200,6 +200,25 @@ describe('what a deployment needs', () => {
     assert.deepEqual(deploymentAt(relative).apps.map((app) => app.name), ['@acme/id', '@acme/members'])
   })
 
+  test('a monolith declaring some of its own still needs everything its apps do', () => {
+    const root = distribution({ monolith: true })
+    const dir = path.join(root, 'apps', 'monolith')
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'))
+    manifest.fairgarden = { env: { ACME_ANALYTICS_ID: { description: 'Counts visits.', required: 'deployed' } } }
+    json(path.join(dir, 'package.json'), manifest)
+    writeFileSync(path.join(dir, 'next.config.ts'), "import { withMonolith } from '@fairgarden/monolith'\nexport default withMonolith({})\n")
+    const deployment = deploymentAt(dir)
+    assert.deepEqual(deployment.apps.map((app) => app.name), ['@acme/core-monolith', '@acme/id', '@acme/members'])
+    assert.ok(requirementsFor(deployment, 'production').some((requirement) => requirement.variable === 'ACME_MEMBERS_SECRET'))
+  })
+
+  test('will not guess what a module not checked out needs', () => {
+    const root = distribution({ monolith: false })
+    rmSync(path.join(root, 'apps', 'members'), { recursive: true })
+    mkdirSync(path.join(root, 'apps', 'members'))
+    assert.throws(() => distributionDeployments(root), /not checked out[\s\S]*apps\/members[\s\S]*git submodule update --init/)
+  })
+
   test('apart, each needs its own, and id what members says id needs to know about it', () => {
     const root = distribution({ monolith: false })
     const id = envApp(path.join(root, 'apps', 'id'))
@@ -317,6 +336,16 @@ describe('setting up Vercel', () => {
     assert.equal(vercel.value('acme-members', 'ACME_MEMBERS_CLIENT_SECRET_CURRENT').value, 'B')
   })
 
+  test('sets a variable that is there but empty, rather than add it again', async () => {
+    const root = distribution({ monolith: false })
+    const vercel = fakeVercel({
+      'acme-id': { ACME_ID_SERVICE_MEMBERS_CLAIMS: { production: { value: '', sensitive: false, updatedAt: 0 } } },
+    })
+    const result = await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    assert.doesNotMatch(result.stderr, /failed/)
+    assert.equal(vercel.value('acme-id', 'ACME_ID_SERVICE_MEMBERS_CLAIMS').value, 'membership')
+  })
+
   test('a dry run keeps nothing, not even a project it was told', async () => {
     const root = distribution({ monolith: true })
     const manifest = path.join(root, 'package.json')
@@ -364,6 +393,19 @@ describe('what an app may declare', () => {
     }
     const deployment = { name: 'mono', root, apps: [envApp(one), envApp(two)] }
     assert.throws(() => requirementsFor(deployment, 'production'), /@acme\/one and @acme\/two both declare SHARED, but differently \(rotate\)/)
+  })
+
+  test('ties a secret only to one declared, and says which side of it checks', () => {
+    const app = (env) => ({ name: '@acme/app', root: '/', env, migrations: undefined })
+    const secret = { description: 's', generate: 'secret', rotate: true }
+    // a typo would set one side and never the other
+    assert.throws(() => assertTies([app({ A_KEY: { ...secret, sameAs: 'B_KYE' } })]), /ties A_KEY to B_KYE, which no app declares/)
+    assert.throws(
+      () => assertTies([app({ A_KEY: { ...secret, sameAs: 'B_KEY' }, B_KEY: { description: 'b', required: 'deployed' } })]),
+      /B_KEY, which is not a rotated secret/
+    )
+    assert.throws(() => assertTies([app({ A_KEY: { ...secret, sameAs: 'B_KEY' }, B_KEY: secret })]), /Mark that one "verifies": true/)
+    assert.doesNotThrow(() => assertTies([app({ A_KEY: { ...secret, sameAs: 'B_KEY' }, B_KEY: { ...secret, verifies: true } })]))
   })
 
   test('ties only rotated secrets together, which are made once for every side', () => {
@@ -479,6 +521,75 @@ describe('rotating', () => {
     await fgDist(root, ['env', 'rotate', '--yes', '--no-redeploy', 'ACME_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
     assert.equal(vercel.value('acme-core', 'ACME_MEMBERS_SECRET'), undefined)
     assert.ok(!vercel.secret('acme-core', 'ACME_MEMBERS_SECRET').includes('by-hand'))
+  })
+
+  test('rotates nothing it is told to that is not a rotated secret', async () => {
+    const { root, vercel } = await setUp(true)
+    const result = await fgDist(root, ['env', 'rotate', '--yes', 'ACME_MEMBERS_SECRETS'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /Nothing declares ACME_MEMBERS_SECRETS as a rotated secret\. What is: ACME_MEMBERS_SECRET,/)
+    assert.deepEqual(vercel.read().projects, vercel.before.projects)
+  })
+
+  test('checks first whichever side declares the tie', async () => {
+    const root = distribution({ monolith: false })
+    // the same secret, tied from the side that checks it instead
+    const manifest = path.join(root, 'apps', 'members', 'package.json')
+    const members = JSON.parse(readFileSync(manifest, 'utf8'))
+    delete members.fairgarden.env.ACME_MEMBERS_CLIENT_SECRET.sameAs
+    members.fairgarden.env.ACME_ID_SERVICE_MEMBERS_SECRET.sameAs = 'ACME_MEMBERS_CLIENT_SECRET'
+    json(manifest, members)
+    const vercel = fakeVercel()
+    await fgDist(root, ['env', 'setup'], { VERCEL_CLI: vercel.bin })
+    const before = vercel.read().log.length
+    assert.equal((await fgDist(root, ['env', 'rotate', '--yes'], { VERCEL_CLI: vercel.bin })).status, 0)
+    const log = vercel.read().log.slice(before)
+    const at = (entry) => log.findIndex((line) => line.startsWith(entry))
+    assert.ok(at('redeploy dpl_acme-id') !== -1 && at('redeploy dpl_acme-id') < at('env add ACME_MEMBERS_CLIENT_SECRET_B'))
+  })
+
+  test('finishes a rotation that stopped between the sides without overwriting what is still sent', async () => {
+    const root = distribution({ monolith: false })
+    const set = (value, updatedAt, sensitive = true) => ({ production: { value, sensitive, updatedAt } })
+    // id took a new value into B and was redeployed; members never got it, and still sends A
+    const vercel = fakeVercel({
+      'acme-id': {
+        ACME_ID_SERVICE_MEMBERS_SECRET_A: set('sent', 1),
+        ACME_ID_SERVICE_MEMBERS_SECRET_B: set('unsent', 3),
+        ACME_ID_SERVICE_MEMBERS_SECRET_CURRENT: set('B', 3, false),
+      },
+      'acme-members': {
+        ACME_MEMBERS_CLIENT_SECRET_A: set('sent', 1),
+        ACME_MEMBERS_CLIENT_SECRET_CURRENT: set('A', 1, false),
+      },
+    })
+    const result = await fgDist(root, ['env', 'rotate', '--yes', 'ACME_ID_SERVICE_MEMBERS_SECRET'], { VERCEL_CLI: vercel.bin })
+    assert.equal(result.status, 0, result.stderr)
+    // id still accepts what members was sending while the new value reached it
+    const [fresh, kept] = vercel.secret('acme-id', 'ACME_ID_SERVICE_MEMBERS_SECRET')
+    assert.equal(kept, 'sent')
+    assert.deepEqual(vercel.secret('acme-members', 'ACME_MEMBERS_CLIENT_SECRET'), [fresh, 'sent'])
+  })
+
+  test('will not choose a slot when those sending one secret are on different ones', () => {
+    const secret = { description: 's', generate: 'secret', rotate: true }
+    const app = (name, env) => ({ name, root: '/', env, migrations: undefined })
+    const variable = (value, updatedAt = 1) => ({ value, type: 'encrypted', updatedAt })
+    const remote = (project, app, existing) => ({
+      deployment: { name: app.name, root: '/', apps: [app] },
+      at: project,
+      target: { project },
+      existing: new Map(Object.entries(existing)),
+    })
+    const checks = app('@acme/checks', { KEY: { ...secret, verifies: true } })
+    const one = app('@acme/one', { ONE_KEY: { ...secret, sameAs: 'KEY' } })
+    const two = app('@acme/two', { TWO_KEY: { ...secret, sameAs: 'KEY' } })
+    const remotes = [
+      remote('checks', checks, { KEY_A: variable(undefined), KEY_CURRENT: variable('A') }),
+      remote('one', one, { ONE_KEY_A: variable(undefined), ONE_KEY_CURRENT: variable('A') }),
+      remote('two', two, { TWO_KEY_B: variable(undefined), TWO_KEY_CURRENT: variable('B') }),
+    ]
+    assert.throws(() => planRotation(remotes), /ONE_KEY in one and TWO_KEY in two send one secret from different slots/)
   })
 
   test('asks first, and without anyone to ask, does nothing', async () => {

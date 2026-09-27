@@ -10,7 +10,7 @@ import {
   type Migrations,
   type MigrationStatus,
 } from './migrations.ts'
-import { packageDir } from './packages.ts'
+import { composesApps, packageDir } from './packages.ts'
 
 /**
  * Migrate the databases of the apps a build ships, as part of the build.
@@ -30,12 +30,14 @@ type Env = Record<string, string | undefined>
 /** The apps to migrate from `root`: itself, or what it depends on. */
 export const migrationTargets = (root: string): Migrations[] => {
   const own = declaredMigrations(root)
-  if (own) return [own]
+  // An app migrates itself. A monolith migrates every app it mounts — and
+  // itself, when it has migrations too.
+  if (own && !composesApps(root)) return [own]
 
   const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as {
     dependencies?: Record<string, string>
   }
-  const found: Migrations[] = []
+  const found: Migrations[] = own ? [own] : []
   for (const name of Object.keys(manifest.dependencies ?? {})) {
     const dir = packageDir(root, name)
     const declared = dir ? declaredMigrations(dir) : undefined

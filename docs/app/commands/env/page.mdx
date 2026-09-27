@@ -15,9 +15,14 @@ generated, with no downtime.
 ## Which deployments
 
 A distribution with `apps/monolith` deploys it: one Vercel project, serving
-every app, which has every app's variables. Without one, each app is a project
-of its own, and each project has its own. A value two apps have to share — the
-secret one signs in to the other with — is set alike in both.
+every app, which has every app's variables — and the monolith's own, if it
+declares any. Without one, each app is a project of its own, and each project
+has its own. A value two apps have to share — the secret one signs in to the
+other with — is set alike in both.
+
+Every app is read from its checkout, so each submodule has to be checked out
+(`git submodule update --init`); one that is not is an error, not an app that
+needs nothing.
 
 Which project deploys what is kept in the distribution's `package.json`, so a
 scheduled rotation in CI finds them without a `vercel link`. `setup` asks the
@@ -108,7 +113,13 @@ variable sensitive (Team Settings → Security & Privacy), even that, it is the
 slot set most recently, which Vercel says of any variable. A secret set by hand
 as plain `NAME` is still accepted beside the slots the first rotation starts,
 and the next one removes it. Name variables to rotate only those, and the ones
-tied to them.
+tied to them; a name that is not a rotated secret is an error, not a rotation
+of nothing.
+
+A rotation that stops partway — between the side that checks and the side that
+sends — is finished by the next: the new value goes into the slot nothing that
+sends the secret is using, so what it sends is still accepted until it has the
+new one.
 
 A session sealed with a value lasts until the second rotation after it, so
 rotate less often than a session lasts, or people are signed out. Members'
@@ -147,8 +158,8 @@ Under `fairgarden.env` in its `package.json`:
 | `unless` | not needed when any of these variables is set |
 | `unlessMounted` | not needed when the app shares a monolith with this package: it works it out |
 | `deployment` | the package whose deployment reads it, when that is not the app's own |
-| `sameAs` | the same value as this other variable |
-| `verifies` | it checks a shared secret, so it is rotated first |
+| `sameAs` | the same value as this other rotated secret, which some app declares |
+| `verifies` | it checks a shared secret, so it is rotated first; every tied group has one |
 
 `deployment` is how an app says what another needs to know about it: members
 declares the variables the id service enrols it with, for the id service's

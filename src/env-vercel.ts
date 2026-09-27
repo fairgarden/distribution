@@ -88,6 +88,67 @@ const groupsOf = (apps: EnvApp[]): Map<string, string[]> => {
   return groups
 }
 
+/** Every rotated secret the apps declare, by name. */
+const rotatedOf = (apps: EnvApp[]): Map<string, EnvDeclaration> =>
+  new Map(apps.flatMap((app) => Object.entries(app.env).filter(([, declaration]) => declaration.rotate)))
+
+/**
+ * Ties have to hold before anything is set by them: `sameAs` names a rotated
+ * secret some app declares — a typo would set one side and not the other —
+ * and every tied group says which of it checks the secret (`verifies`), which
+ * is rotated first.
+ */
+export const assertTies = (apps: EnvApp[]): void => {
+  const rotated = rotatedOf(apps)
+  const declared = new Set(apps.flatMap((app) => Object.keys(app.env)))
+  for (const app of apps) {
+    for (const [variable, { sameAs }] of Object.entries(app.env)) {
+      if (!sameAs) continue
+      if (!declared.has(sameAs)) throw new Error(`${app.name} ties ${variable} to ${sameAs}, which no app declares.`)
+      if (!rotated.has(sameAs)) {
+        throw new Error(`${app.name} ties ${variable} to ${sameAs}, which is not a rotated secret: one value cannot be kept alike.`)
+      }
+    }
+  }
+  for (const group of new Set(groupsOf(apps).values())) {
+    if (group.length > 1 && !group.some((variable) => rotated.get(variable)?.verifies)) {
+      throw new Error(
+        `${group.join(', ')} are one secret, but nothing says which of them checks it. Mark that one ` +
+          '"verifies": true, so it is rotated first.'
+      )
+    }
+  }
+}
+
+interface Member {
+  remote: Remote
+  name: string
+  verifies: boolean
+}
+
+/**
+ * The slot a group's new value goes into: one no sender of it is using, so
+ * nothing that sends the secret has its value overwritten while what checks
+ * it could still be accepting only that. After a rotation that stopped between
+ * the side that checks and the side that sends, that is the slot it was
+ * finishing. Senders on different slots leave no slot safe for all of them.
+ */
+const targetSlot = (members: Member[]): Slot => {
+  const using = (list: Member[]) =>
+    [...new Set(list.map((member) => currentSlot(member.remote.existing, member.name)).filter(Boolean))] as Slot[]
+  const senders = members.filter((member) => !member.verifies)
+  const sending = using(senders)
+  if (sending.length > 1) {
+    throw new Error(
+      `${senders.map((member) => `${member.name} in ${member.remote.target.project}`).join(' and ')} send one secret ` +
+        'from different slots, so no slot is free in all of them: a rotation stopped between them. Point every ' +
+        "*_CURRENT at the same slot, or remove the group's slots and run setup, which starts it afresh."
+    )
+  }
+  const current = sending[0] ?? using(members)[0]
+  return current ? otherSlot(current) : 'A'
+}
+
 export interface Remote {
   deployment: Deployment
   /** Where it is, relative to the distribution. */
@@ -221,7 +282,9 @@ export const planSetup = async (
   environment: string,
   { ask }: { ask?: (requirement: Requirement, remote: Remote) => Promise<string | undefined> } = {}
 ): Promise<SetupPlan> => {
+  assertTies(everyApp(remotes))
   const groups = groupsOf(everyApp(remotes))
+  const rotated = rotatedOf(everyApp(remotes))
   const decided = new Map<string, { value: string; slot: Slot }>()
   const plan: SetupPlan = { writes: [], notes: [], unresolved: [] }
 
@@ -238,10 +301,11 @@ export const planSetup = async (
         let chosen = decided.get(group[0])
         if (!chosen) {
           const already = remotes.flatMap((each) =>
-            group.filter((tied) => isPresent(each.existing, tied)).map((tied) => ({ remote: each, name: tied }))
+            group
+              .filter((tied) => isPresent(each.existing, tied))
+              .map((tied): Member => ({ remote: each, name: tied, verifies: Boolean(rotated.get(tied)?.verifies) }))
           )
-          const current = already.length > 0 ? currentSlot(already[0].remote.existing, already[0].name) : undefined
-          chosen = { value: newSecret(), slot: current ? otherSlot(current) : 'A' }
+          chosen = { value: newSecret(), slot: targetSlot(already) }
           decided.set(group[0], chosen)
           for (const { remote: where, name } of already) {
             // This one is written below, as what was missing.
@@ -265,7 +329,8 @@ export const planSetup = async (
         plan.unresolved.push({ remote, requirement, why: 'nothing to set it to' })
         continue
       }
-      plan.writes.push({ remote, variable, value, sensitive: isSensitive(declaration), exists: false })
+      // Set but empty is still set: it is updated, not added again.
+      plan.writes.push({ remote, variable, value, sensitive: isSensitive(declaration), exists: remote.existing.has(variable) })
       plan.notes.push({ remote, variable, source })
     }
   }
@@ -297,47 +362,59 @@ export interface Rotation {
  * group ties together moves to the same slot, with the same value.
  */
 export const planRotation = (remotes: Remote[], only: string[] = []): Rotation[][] => {
-  const groups = groupsOf(everyApp(remotes))
-  const fresh = new Map<string, { value: string; slot: Slot }>()
-  const phases: Rotation[][] = [[], []]
+  const apps = everyApp(remotes)
+  assertTies(apps)
+  const groups = groupsOf(apps)
+  const rotated = rotatedOf(apps)
+  // Naming a secret that is not one would rotate nothing, and say it had.
+  const unknown = only.filter((name) => !rotated.has(name))
+  if (unknown.length > 0) {
+    throw new Error(
+      `Nothing declares ${unknown.join(', ')} as a rotated secret. What is: ${[...rotated.keys()].join(', ') || 'nothing'}.`
+    )
+  }
+  const groupOf = (name: string): string[] => groups.get(name) ?? [name]
 
+  // Every rotated secret set in each project, once, however many of its apps
+  // declare it — and they have to mean the same by it.
+  const found: Member[] = []
   for (const remote of remotes) {
     const here = new Set(remote.deployment.apps.map((app) => app.name))
-    // Two apps in one deployment may declare the same variable; it is one
-    // variable, rotated once, and they have to mean the same by it.
-    const planned = new Map<string, Requirement>()
-    for (const app of everyApp(remotes)) {
+    const seen = new Map<string, Requirement>()
+    for (const app of apps) {
       for (const [variable, declaration] of Object.entries(app.env)) {
         if (!declaration.rotate || !here.has(declaration.deployment ?? app.name)) continue
         if (!isPresent(remote.existing, variable)) continue
-        const already = planned.get(variable)
+        const already = seen.get(variable)
         if (already) {
           assertAgree(variable, already, app.name, declaration)
           continue
         }
-        planned.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
-        const group = groups.get(variable) ?? [variable]
-        if (only.length > 0 && !group.some((tied) => only.includes(tied))) continue
-
-        const current = currentSlot(remote.existing, variable)
-        let chosen = fresh.get(group[0])
-        if (!chosen) {
-          chosen = { value: newSecret(), slot: current ? otherSlot(current) : 'A' }
-          fresh.set(group[0], chosen)
-        }
-        // Set by hand before the slots, it was kept alongside them for one
-        // rotation; this is the next.
-        const removes = current && remote.existing.has(variable) ? [variable] : []
-        const sends = Boolean(declaration.sameAs) && !declaration.verifies
-        phases[sends ? 1 : 0].push({
-          remote,
-          variable,
-          writes: intoSlot(remote, variable, chosen.slot, chosen.value),
-          removes,
-          alone: group.length === 1,
-        })
+        seen.set(variable, { variable, anyOf: [variable], apps: [app.name], declaration })
+        if (only.length > 0 && !groupOf(variable).some((tied) => only.includes(tied))) continue
+        found.push({ remote, name: variable, verifies: Boolean(declaration.verifies) })
       }
     }
+  }
+
+  // One new value, and one slot, for each group, chosen from all of it.
+  const chosen = new Map<string, { value: string; slot: Slot }>()
+  for (const { name } of found) {
+    const key = groupOf(name)[0]
+    if (chosen.has(key)) continue
+    const members = found.filter((each) => groupOf(each.name)[0] === key)
+    chosen.set(key, { value: newSecret(), slot: targetSlot(members) })
+  }
+
+  const phases: Rotation[][] = [[], []]
+  for (const { remote, name, verifies } of found) {
+    const { value, slot } = chosen.get(groupOf(name)[0])!
+    // Set by hand before the slots, it was kept alongside them for one
+    // rotation; this is the next.
+    const removes = currentSlot(remote.existing, name) && remote.existing.has(name) ? [name] : []
+    const alone = groupOf(name).length === 1
+    // What checks a shared secret goes first; every other side of it after.
+    phases[alone || verifies ? 0 : 1].push({ remote, variable: name, writes: intoSlot(remote, name, slot, value), removes, alone })
   }
   // A secret nothing else shares can wait for its deployment's last step:
   // one redeploy then, rather than one for it and another after.
