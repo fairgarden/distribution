@@ -28,7 +28,7 @@ changes nothing anyone would read about, a lockfile bump say, is labelled
 `skip changelog`. Make the check required on main, or it only advises.
 
 When the version is published, the section is already there, and committed: the
-publish workflow makes it the GitHub release's notes. [`release`](/commands/release)
+publish workflow makes it the GitHub release's notes. [`next-version`](/commands/next-version)
 then opens the next version's section as it moves main on.
 
 ## Between a release and the next version
@@ -75,5 +75,5 @@ The one thing people change in a distribution by hand is the organization's
 policy, in `policies/`. A pull request that changes it needs its own line,
 checked like a module's; any other pull request into the distribution needs
 none. The section is the distribution's version, and
-[`release`](/commands/release#in-a-distribution) opens the next one — or, for a
+[`next-version`](/commands/next-version#in-a-distribution) opens the next one — or, for a
 release never published when the month turns, renames it.

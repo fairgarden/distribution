@@ -267,7 +267,7 @@ const versionLine = (module: ModuleVersion): string =>
 export const releasingSection = (name: string, version: string): string => {
   const parsed = semver.parse(version)
   // A prerelease has no line to maintain — there is no 2.0.0-alpha.0 that
-  // someone is still running and needs a fix for — so `release` only moves it
+  // someone is still running and needs a fix for — so `next-version` only moves it
   // forward, and saying otherwise here would contradict the command.
   const prerelease = (parsed?.prerelease.length ?? 0) > 0
 
@@ -276,21 +276,21 @@ export const releasingSection = (name: string, version: string): string => {
 
   const moveOn = prerelease
     ? [
-        '2. **Move it on.** `pnpm release` opens a pull request moving main to',
-        `   \`${(parsed && semver.inc(version, 'prerelease')) ?? '…'}\` and starting its section of the changelog, or`,
-        '   `pnpm release --id rc` to change identifier. Merging it lifts the hold. A',
-        '   prerelease gets no maintenance branch; there is no released line behind it',
-        '   yet.',
+        '2. **Start the next version.** `pnpm next-version` opens a pull request moving',
+        `   main to \`${(parsed && semver.inc(version, 'prerelease')) ?? '…'}\` and starting its section of the`,
+        '   changelog, or `pnpm next-version --id rc` to change identifier. Merging it',
+        '   lifts the hold. A prerelease gets no maintenance branch; there is no',
+        '   released line behind it yet.',
       ]
     : [
-        '2. **Decide which way main moves on.** `pnpm release` on its own prints the',
+        '2. **Decide the next version.** `pnpm next-version` on its own prints the',
         '   three and stops — it will not choose for you:',
         '',
         '   | | Next | Leaves behind |',
         '   | --- | --- | --- |',
-        `   | \`pnpm release --patch\` | \`${after('patch')}\` | nothing; this branch is the line |`,
-        `   | \`pnpm release --minor\` | \`${after('minor')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
-        `   | \`pnpm release --major\` | \`${after('major')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
+        `   | \`pnpm next-version --patch\` | \`${after('patch')}\` | nothing; this branch is the line |`,
+        `   | \`pnpm next-version --minor\` | \`${after('minor')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
+        `   | \`pnpm next-version --major\` | \`${after('major')}\` | \`v${parsed?.major ?? 'x'}-${parsed?.minor ?? 'y'}\` at \`${after('patch')}\` |`,
         '',
         '   Each opens a pull request starting the next version, and merging it lifts',
         '   the hold. The branch it leaves behind is where fixes to what you just',
@@ -339,7 +339,7 @@ export const releasingSection = (name: string, version: string): string => {
 /**
  * How to release the distribution, written into its own readme.
  *
- * Without the version in it: `fg-dist release` moves a distribution's version
+ * Without the version in it: `next-version` moves a distribution's version
  * and nothing else, so a version here would be out of date the moment it did.
  */
 export const distributionReleasingSection = (name: string): string =>
@@ -356,11 +356,11 @@ export const distributionReleasingSection = (name: string): string =>
     '   version already on npm, or one from a month that is over. Once it is out,',
     "   open pull requests are held — their changelog check fails — so nothing is",
     '   noted under a version that has already shipped.',
-    '2. **Move it on.** `pnpm release` moves the version to the next alpha, or to',
-    "   the month's first release once the month has turned, and starts its section",
-    '   of the changelog. `--id beta` or `--stable` takes the release through its',
-    '   stages instead. Commit it on a branch and open a pull request; merging it',
-    '   lifts the hold.',
+    '2. **Start the next version.** `pnpm next-version` moves the version to the next',
+    "   alpha, or to the month's first release once the month has turned, and starts",
+    '   its section of the changelog. `--id beta` or `--stable` takes the release',
+    '   through its stages instead. Commit it on a branch and open a pull request;',
+    '   merging it lifts the hold.',
     '',
     'A held pull request goes on once it is brought up to date with main and, if it',
     "added a line, that line is moved into the new version's section.",
@@ -551,7 +551,7 @@ const applyBlocks = async (planned: PlannedBlock[], check: boolean): Promise<Rea
 /**
  * Write a distribution's own version into its readme, and nothing else.
  *
- * What `fg-dist release` needs: the distribution's version moved and the
+ * What `next-version` needs: the distribution's version moved and the
  * modules it ships did not, so their checkouts are not read — and need not be
  * there — and their readmes are not touched.
  */

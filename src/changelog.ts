@@ -12,7 +12,7 @@ import { isDistribution } from './submodules.ts'
  * carries — the next to be released — and every pull request adds a line to
  * it that links the pull request, which CI checks before it can merge. When
  * the version is published its notes are written already, and committed: the
- * release takes them as they are, and `release` opens the next section.
+ * release takes them as they are, and `next-version` opens the next section.
  *
  * A distribution's changelog is mostly written for it. fg-dist notes each
  * module it bumps, with a link to that release's notes, and each module it
@@ -123,7 +123,7 @@ const readVersion = (root: string): string | undefined => {
 
 /**
  * Open the section for the version a repository now carries, when it keeps a
- * changelog: what `release` does as it moves main on.
+ * changelog: what `next-version` does as it moves main on.
  */
 export const openSection = async (root: string, version = readVersion(root)): Promise<boolean> => {
   const file = path.join(root, CHANGELOG)
@@ -224,8 +224,8 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
   const url = `${server}/${repository}/pull/${pullRequest}`
 
   // Nothing merges between a release and the start of the next cycle: its
-  // lines would go under a version already out. The release moves main on
-  // straight after publishing, and this runs again once the branch has that.
+  // lines would go under a version already out. `next-version` moves main on
+  // after publishing, and this runs again once the branch has that.
   const carried = readVersion(root)
   if (carried && attempt(root, ['rev-parse', '--verify', '--quiet', `refs/tags/v${carried}`]) !== undefined) {
     return {
@@ -233,22 +233,24 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
       required: true,
       message:
         `This branch is at ${carried}, which is released. Bring it up to date with its base — ` +
-        'the release starts the next version there — and this runs again.',
+        '`pnpm next-version` starts the next version there — and this runs again.',
     }
   }
 
+  const changed = git(root, ['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean)
+
   // Starting the next version is what opens its section; nothing in it is news.
+  // Only when that is all it does: a change that comes with it is still one
+  // someone will want to read about.
   const opened = topVersion(attempt(root, ['show', `${base}:${CHANGELOG}`]) ?? '')
   const current = topVersion(existsSync(path.join(root, CHANGELOG)) ? readFileSync(path.join(root, CHANGELOG), 'utf8') : '')
-  if (current && opened && current !== opened) {
+  if (current && opened && current !== opened && onlyStartsVersion(root, base, changed)) {
     return { ok: true, required: false, message: `This starts ${current}, so it needs no line of its own.` }
   }
 
   if (labels.includes(SKIP_LABEL)) {
     return { ok: true, required: false, message: `Labelled "${SKIP_LABEL}", so no entry is needed.` }
   }
-
-  const changed = git(root, ['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean)
   if (distribution) {
     const policy = changed.filter((file) => file.startsWith('policies/') && !file.startsWith('policies/dist/'))
     if (policy.length === 0) {
@@ -294,6 +296,25 @@ export const checkChangelog = (root: string, check: ChangelogCheck): ChangelogCh
   }
   return { ok: true, required: true, message: `${CHANGELOG} has this pull request under ${version}.` }
 }
+
+/**
+ * Whether these changes are only what `next-version` writes: the changelog,
+ * the readme, and the version in package.json.
+ */
+const onlyStartsVersion = (root: string, base: string, changed: string[]): boolean =>
+  changed.every((file) => {
+    if (file === CHANGELOG || /^readme\.md$/i.test(file)) return true
+    if (file !== 'package.json') return false
+    // The version and nothing else: a dependency moved alongside it is a change.
+    const without = (text: string | undefined): string | undefined => {
+      if (text === undefined) return undefined
+      const { version: _version, ...rest } = JSON.parse(text) as Record<string, unknown>
+      return JSON.stringify(rest)
+    }
+    const before = without(attempt(root, ['show', `${base}:package.json`]))
+    const after = without(existsSync(path.join(root, 'package.json')) ? readFileSync(path.join(root, 'package.json'), 'utf8') : undefined)
+    return before !== undefined && before === after
+  })
 
 /** What a GitHub Actions `pull_request` run says about itself. */
 export const pullRequestFromActions = (): Partial<ChangelogCheck> => {

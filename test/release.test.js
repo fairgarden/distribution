@@ -301,7 +301,7 @@ test('a module is given the scripts the workflow calls, and the tool to run them
   const manifest = JSON.parse(readFileSync(path.join(root, 'apps/widget/package.json'), 'utf8'))
 
   assert.equal(manifest.scripts.canary, 'fg-dist canary')
-  assert.equal(manifest.scripts.release, 'fg-dist release')
+  assert.equal(manifest.scripts['next-version'], 'fg-dist next-version')
   assert.equal(manifest.scripts['release:check'], 'fg-dist release --check')
   // Pinned to the CLI that set it up, not to a version written down somewhere.
   assert.match(manifest.devDependencies['@fairgarden/distribution'], /^\^\d/)
@@ -328,6 +328,21 @@ test('a script the module already defines is left alone', async () => {
   const updated = JSON.parse(readFileSync(file, 'utf8'))
   assert.equal(updated.scripts.release, 'make release')
   assert.equal(updated.scripts.canary, 'fg-dist canary')
+})
+
+test('the default `release` script is renamed `next-version`, which says what it does', async () => {
+  const root = distribution()
+  const file = path.join(root, 'apps/widget/package.json')
+  const manifest = JSON.parse(readFileSync(file, 'utf8'))
+  manifest.scripts = { release: 'fg-dist release', 'release:check': 'fg-dist release --check' }
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+
+  await writeWorkflows(root)
+  const { scripts } = JSON.parse(readFileSync(file, 'utf8'))
+  assert.equal(scripts.release, undefined)
+  assert.equal(scripts['next-version'], 'fg-dist next-version')
+  // what the publish workflow runs is still about releasing
+  assert.equal(scripts['release:check'], 'fg-dist release --check')
 })
 
 test('a workflow that is already there is left alone unless forced', async () => {

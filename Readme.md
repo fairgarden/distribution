@@ -90,11 +90,11 @@ line linking itself.
    dist tag. It refuses if that version is already on npm. Once it is out, open
    pull requests are held — their changelog check fails — so nothing is noted
    under a version that has already shipped.
-2. **Move it on.** `pnpm release` opens a pull request moving main to
-   `0.1.0-alpha.7` and starting its section of the changelog, or
-   `pnpm release --id rc` to change identifier. Merging it lifts the hold. A
-   prerelease gets no maintenance branch; there is no released line behind it
-   yet.
+2. **Start the next version.** `pnpm next-version` opens a pull request moving
+   main to `0.1.0-alpha.7` and starting its section of the
+   changelog, or `pnpm next-version --id rc` to change identifier. Merging it
+   lifts the hold. A prerelease gets no maintenance branch; there is no
+   released line behind it yet.
 
 A held pull request goes on once it is brought up to date with main and its
 line is moved into the new version's section.

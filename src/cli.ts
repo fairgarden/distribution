@@ -77,7 +77,8 @@ Commands:
                        --distribution, this one a publishing workflow too
   overrides            Point the workspace at this distribution's own checkouts
   canary               Stamp a canary version into the manifest, for CI
-  release              Move a module on from the release it just published
+  next-version         Start the next development cycle, choosing the version main works towards
+  release --check      Fail unless this version can be published, and stamp it (CI)
   prerelease           Start the next line on a branch, leaving main where it is
   check                Fail when this ships anything older than what it extends
   verify               Fail when a file fg-dist writes no longer says what is true (CI)
@@ -97,13 +98,13 @@ Commands:
 
 Options:
   --cwd <dir>          Repository directory (default: the working directory)
-  --major              Allow major upgrades (bump); the next major (release, prerelease)
-  --minor              Release the next minor, or branch one (release, prerelease)
-  --patch              Release the next patch, staying on this line (release)
-  --id <name>          Prerelease identifier: alpha, beta, rc (release, prerelease)
-  --stable             A distribution's release leaves its prerelease stages (release)
-  --next <how>         prerelease, alpha, beta, rc, patch, minor, major or stable (release)
-  --direct             Commit main's move on where this runs and push it, no pull request (release)
+  --major              Allow major upgrades (bump); the next major (next-version, prerelease)
+  --minor              The next minor, or branch one (next-version, prerelease)
+  --patch              The next patch, staying on this line (next-version)
+  --id <name>          Prerelease identifier: alpha, beta, rc (next-version, prerelease)
+  --stable             A distribution's next release leaves its prerelease stages (next-version)
+  --next <how>         prerelease, alpha, beta, rc, patch, minor, major or stable (next-version)
+  --direct             Commit main's move on where this runs and push it, no pull request (next-version)
   --no-fetch           Use the refs already fetched (sync, bump)
   --dry-run            Report what would change without changing it
   --check              Verify instead of writing (readme, release, overrides)
@@ -120,7 +121,7 @@ Options:
   --no-tag             Do not tag the extracted module with its declared version
   --force              Overwrite workflows that are already there (workflows)
   --distribution       Publish the distribution itself, for others to extend (workflows)
-  --no-push            Push nothing and open no pull request (release, fork, contribute, bump)
+  --no-push            Push nothing and open no pull request (next-version, fork, contribute, bump)
   --to <ref>           Upstream tag, branch or commit to go back to (unfork)
   --base <branch>      Branch the pull request goes into (contribute); what it merges into (changelog check)
   --pr <number>        The pull request to check, outside GitHub Actions (changelog check)
@@ -622,7 +623,7 @@ const main = async (): Promise<number> => {
       }
       process.stdout.write(
         '\nIt publishes the manifest, recording every module it ships, and its policy. ' +
-          'Version it with `pnpm release`, then run the workflow.\n'
+          'Run the workflow to publish it; after each release, `pnpm next-version` starts the next.\n'
       )
       return 0
     }
@@ -777,20 +778,29 @@ const main = async (): Promise<number> => {
     return 0
   }
 
-  if (args.command === 'release') {
+  // What the publish workflow runs before it publishes.
+  if (args.command === 'release' && args.check) {
     const root = repositoryRoot(args.cwd)
     if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+    const releasable = await checkReleasable(root)
+    // A distribution records what it ships in what it publishes.
+    if (isDistribution(root)) await stampModules(root, { version: releasable.version })
+    await reportRelease(releasable)
+    process.stdout.write(
+      `${releasable.name}@${releasable.version} is not on npm; ready to release as ` +
+        `${releasable.tag}.\n`
+    )
+    return 0
+  }
 
-    if (args.check) {
-      const releasable = await checkReleasable(root)
-      // A distribution records what it ships in what it publishes.
-      if (isDistribution(root)) await stampModules(root, { version: releasable.version })
-      await reportRelease(releasable)
-      process.stdout.write(
-        `${releasable.name}@${releasable.version} is not on npm; ready to release as ` +
-          `${releasable.tag}.\n`
-      )
-      return 0
+  // `release`, as this was called before it said what it does: it starts the
+  // next development cycle, and deciding its version is the whole of it. The
+  // old name goes on working, for modules whose scripts still call it.
+  if (args.command === 'next-version' || args.command === 'release') {
+    const root = repositoryRoot(args.cwd)
+    if (!root) throw new Error(`${args.cwd} is not inside a git repository.`)
+    if (args.command === 'release') {
+      process.stderr.write('`release` is `next-version` now: it starts the next development cycle.\n\n')
     }
 
     if (isDistribution(root)) {
@@ -819,7 +829,10 @@ const main = async (): Promise<number> => {
         process.stdout.write('Committed and pushed.\n')
       } else if (!args.dryRun && next.version !== next.from) {
         process.stdout.write(
-          `Commit it, then run the publish workflow, which publishes it and tags v${next.version}.\n`
+          next.published
+            ? `Commit it on a branch and open a pull request: merging it starts ${next.version}, ` +
+                'and lets held pull requests through.\n'
+            : `Commit it, and the publish workflow releases it as v${next.version}.\n`
         )
       }
       return 0
@@ -832,12 +845,12 @@ const main = async (): Promise<number> => {
       if (!released.includes('-')) {
         process.stdout.write(
           `Released ${released}, ${tagged ? `tagged ${base}` : 'which is not tagged here'}\n\n` +
-            'Which way does main move on?\n\n'
+            'What is the next version?\n\n'
         )
         for (const bump of ['patch', 'minor', 'major'] as Bump[]) {
           const plan = planRelease(released, { bump })
           process.stdout.write(
-            `  --${bump.padEnd(6)} ${plan.next.version.padEnd(8)} ` +
+            `  pnpm next-version --${bump.padEnd(6)} ${plan.next.version.padEnd(8)} ` +
               (plan.maintenance
                 ? `${plan.maintenance.branch} keeps ${released.split('.').slice(0, 2).join('.')}.x\n`
                 : 'stays on this line; nothing branches off\n')

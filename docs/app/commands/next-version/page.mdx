@@ -1,13 +1,16 @@
-# `release`
+# `next-version`
 
 ```bash
-pnpm release --patch | --minor | --major [--dry-run] [--no-push]
+pnpm next-version --patch | --minor | --major [--dry-run] [--no-push]
 ```
 
-Moves a module on from the release it has just published.
+Starts the next development cycle, once the version main was working towards
+has been published — and deciding what the next one is, is the whole of it.
 
 Run it in a module, after the [publish workflow](/commands/workflows) has shipped
-the version main is sitting on.
+the version main is sitting on. It used to be called `release`, which still
+works and says so; `release --check` is still what the publish workflow runs
+before it publishes.
 
 In a distribution it moves the distribution's version on instead — see
 [below](#in-a-distribution).
@@ -19,17 +22,17 @@ its own, which the publish workflow has made its GitHub release's notes. See
 
 ## It will not choose for you
 
-Which way main moves on is a judgement about what changed, so it is asked for.
-Run it with no flag and it prints the three and stops:
+What the next version is, is a judgement about what changed, so it is asked
+for. Run it with no flag and it prints the three and stops:
 
 ```
 Released 1.6.0, tagged v1.6.0
 
-Which way does main move on?
+What is the next version?
 
-  --patch  1.6.1    stays on this line; nothing branches off
-  --minor  1.7.0    v1-6 keeps 1.6.x
-  --major  2.0.0    v1-6 keeps 1.6.x
+  pnpm next-version --patch  1.6.1    stays on this line; nothing branches off
+  pnpm next-version --minor  1.7.0    v1-6 keeps 1.6.x
+  pnpm next-version --major  2.0.0    v1-6 keeps 1.6.x
 
 Or `pnpm dist prerelease --major` to start the next line beside main, without
 moving main off this one.
@@ -88,9 +91,9 @@ someone is still running and needs a fix for, so it only moves forward — and
 because there is only one way to go, no flag is needed:
 
 ```bash
-pnpm release              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
-pnpm release --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
-pnpm release --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
+pnpm next-version              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
+pnpm next-version --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
+pnpm next-version --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
 ```
 
 `--id` starts a new identifier when the version is not already on it, and counts
@@ -138,13 +141,13 @@ main still carries — the bump is on a branch, waiting for review.
 
 The publish workflow holds every open pull request once it has released — see
 [Changelogs](/overview/changelogs#between-a-release-and-the-next-version) — and
-the pull request `release` opens is what lets them through. Nothing else can
+the pull request `next-version` opens is what lets them through. Nothing else can
 merge until it does, so run it straight after the release.
 
 ## Moving on without a pull request
 
 ```bash
-pnpm release --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
+pnpm next-version --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
 ```
 
 `--direct` commits main's move where it runs and pushes it there, rather than
@@ -160,15 +163,15 @@ main's rules, could run it straight after releasing.
 ## In a distribution
 
 ```bash
-pnpm release [--id <alpha|beta|rc>] [--stable] [--dry-run]
+pnpm next-version [--id <alpha|beta|rc>] [--stable] [--dry-run]
 ```
 
 A distribution is versioned `YY.MM.NN` — see
-[Versioning](/overview/versioning#months-for-end-users) — and `release` sets the
+[Versioning](/overview/versioning#months-for-end-users) — and `next-version` sets the
 version the publish workflow releases next. Nothing branches: a distribution has
 no lines of its own to maintain.
 
-| The manifest says | | `release` moves it to |
+| The manifest says | | `next-version` moves it to |
 | --- | --- | --- |
 | `26.09.01-alpha.0`, published | | `26.09.01-alpha.1` |
 | `26.09.01-alpha.1`, published | `--id beta` | `26.09.01-beta.0` |

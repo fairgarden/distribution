@@ -159,14 +159,14 @@ jobs:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         # Anything merged now would be noted under a version already out. Each
         # open pull request's changelog check runs again, sees the release and
-        # refuses it — until \`pnpm release\` starts the next version and the
+        # refuses it — until \`pnpm next-version\` starts the next version and the
         # branch catches up with it.
         run: pnpm run changelog hold
 
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\` to the \\\`\${{ inputs.dist-tag }}\\\` tag." >> "\$GITHUB_STEP_SUMMARY"
-          echo "Pull requests are held until the next version starts: run \\\`pnpm release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`pnpm next-version\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
 
   '.github/actions/publish-prepare/action.yml': `name: Prepare for publishing
@@ -340,7 +340,7 @@ ${distributionSetup(true)}
       - name: Stamp what it ships
         id: version
         # Refuses when this version is on npm already, or names a month that
-        # is over: \`pnpm release\` moves the distribution on.
+        # is over: \`pnpm next-version\` moves the distribution on.
         run: pnpm run release:check
 
       - name: Publish to npm
@@ -377,14 +377,14 @@ ${distributionSetup(true)}
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         # Anything merged now would be noted under a version already out. Each
         # open pull request's changelog check runs again, sees the release and
-        # refuses it — until \`pnpm release\` starts the next version and the
+        # refuses it — until \`pnpm next-version\` starts the next version and the
         # branch catches up with it.
         run: pnpm run changelog hold
 
       - name: Summary
         run: |
           echo "Published \\\`${packageName}@\${{ steps.version.outputs.version }}\\\`." >> "\$GITHUB_STEP_SUMMARY"
-          echo "Pull requests are held until the next version starts: run \\\`pnpm release\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
+          echo "Pull requests are held until the next version starts: run \\\`pnpm next-version\\\` and merge what it opens." >> "\$GITHUB_STEP_SUMMARY"
 `,
   ...checkWorkflows({ submodules: true }),
 })
@@ -589,7 +589,7 @@ const toolVersion = async (): Promise<string | undefined> => (await toolRelease(
  * The scripts the workflow calls, and a module releases by hand with.
  *
  * They are named rather than spelled out in the workflow so that every
- * module's workflow is the same file, and so `pnpm release` is the answer to
+ * module's workflow is the same file, and so `pnpm next-version` is the answer to
  * "how do I release this" wherever you are standing.
  */
 export const releaseScripts = (packageName: string): Record<string, string> => {
@@ -600,7 +600,8 @@ export const releaseScripts = (packageName: string): Record<string, string> => {
     // whose binary nothing puts on the PATH.
     dist: cli,
     canary: `${cli} canary`,
-    release: `${cli} release`,
+    // After publishing: the next development cycle, and its version.
+    'next-version': `${cli} next-version`,
     'release:check': `${cli} release --check`,
     changelog: `${cli} changelog`,
   }
@@ -648,6 +649,9 @@ export const updateManifest = async (
   }
 
   const scripts = { ...(updated.scripts as Record<string, string> | undefined) }
+  // `release` was what `next-version` used to be called. The default is
+  // renamed with it; a script the module wrote itself is its own.
+  if (scripts.release === `${releaseScripts(packageName).dist} release`) delete scripts.release
   for (const [name, command] of Object.entries(releaseScripts(packageName))) {
     // A script the module already defines may call the tool differently on
     // purpose.

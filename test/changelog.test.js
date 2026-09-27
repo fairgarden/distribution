@@ -256,21 +256,49 @@ test('nothing merges while the version its base is at is already released', () =
   assert.match(result.message, /at 1\.1\.0, which is released/)
 })
 
-test('the pull request that starts the next version needs no line of its own', () => {
+/** 1.1.0 released, and a branch off it that starts 1.2.0 as `next-version` does. */
+const starting = () => {
   const { root, base } = moduleRepo()
   git(root, ['tag', 'v1.1.0', base])
+  git(root, ['switch', '-q', '-c', 'start-1.2.0', base])
   const file = path.join(root, 'CHANGELOG.md')
   commit(
     root,
     {
       'package.json': { name: '@acme/widget', version: '1.2.0' },
       'CHANGELOG.md': withSection(readFileSync(file, 'utf8'), '1.2.0'),
+      'Readme.md': '# @acme/widget\n\nVersion **1.2.0**\n',
     },
     'Start 1.2.0'
   )
+  return { root, base }
+}
+
+test('the pull request that starts the next version needs no line of its own', () => {
+  const { root, base } = starting()
   const result = check(root, base)
   assert.deepEqual([result.ok, result.required], [true, false])
   assert.match(result.message, /starts 1\.2\.0/)
+})
+
+test('a change that comes with starting the next version still needs its line', () => {
+  // as when a fix and the bump that unblocks it land in one pull request
+  const { root, base } = starting()
+  commit(root, { 'app/page.tsx': 'fixed\n' }, 'Fix the login')
+  let result = check(root, base)
+  assert.deepEqual([result.ok, result.required], [false, true])
+  assert.match(result.message, /under 1\.2\.0/)
+
+  const file = path.join(root, 'CHANGELOG.md')
+  commit(root, { 'CHANGELOG.md': withEntry(readFileSync(file, 'utf8'), '1.2.0', `Fix the login ([#42](${PR}))`) }, 'Note it')
+  result = check(root, base)
+  assert.deepEqual([result.ok, result.required], [true, true])
+})
+
+test('a dependency moved alongside the version is a change too', () => {
+  const { root, base } = starting()
+  commit(root, { 'package.json': { name: '@acme/widget', version: '1.2.0', dependencies: { next: '^16.3.6' } } }, 'Bump next')
+  assert.equal(check(root, base).required, true)
 })
 
 test('the check builds fg-dist where it is the workspace root, which pnpm filters leave out', async () => {
