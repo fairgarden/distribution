@@ -19,16 +19,20 @@ Migrating: this is a Vercel production build.
 
 ## In the build
 
-`fg-dist init` gives every distribution a `migrate` task that runs after
-`build`, and the root's `build` and `modular:build` run both:
+`fg-dist init` gives the root's `build` and `modular:build` a step after
+turbo's, which runs each app's (or the monolith's) `migrate` script:
 
 ```json
-"build": "turbo run build migrate --filter=./apps/monolith"
+"build": "turbo run build --filter=./apps/monolith && pnpm --filter=./apps/monolith run --if-present migrate"
 ```
 
-After the build, so a build that fails to compile changes nothing. Never from
-turbo's cache, which would skip it for a database that has not seen it — a new
-preview's, say. A migration failing fails the build, and the deployment with it.
+After the build, so a build that fails to compile changes nothing. Outside
+turbo, for two reasons. turbo keeps from a task every variable its `turbo.json`
+does not list, and an app may name its database anything — kept from the
+migrator, a variable that names one app's database could quietly leave it with
+another's. And turbo can serve a task from its cache, which would skip a
+migration for a database that has not seen it — a new preview's, say. A
+migration failing fails the build, and the deployment with it.
 
 With `--build` it only migrates where a build is meant to:
 
@@ -45,8 +49,8 @@ gives it. Until then, a preview reaching production's database would take a
 branch's migrations there before the branch is merged.
 
 On Vercel the Build Command has to run the root's `build` — `pnpm build`, the
-default when the Root Directory is the repository — or the `migrate` task does
-not run at all.
+default when the Root Directory is the repository — or migrating does not run
+at all.
 
 ## Rollbacks
 
@@ -64,7 +68,13 @@ pnpm dist migrate --rollback @fairgarden/id --to 0002_policy_revisions
 ```
 
 Each runs the migration's `<tag>.down.sql`, written by hand beside the one
-drizzle-kit generated. A migration without one cannot be rolled back.
+drizzle-kit generated. A migration without one cannot be rolled back. Nor can
+one the database has newer migrations on top of than this version knows, or one
+edited since it ran — its down file undoes what the file says now, not what
+ran. Roll back with the version that applied it.
+
+`--status` changes nothing: a database that has never been migrated is left
+without a journal, and every migration shows as pending.
 
 ## Which database
 
@@ -77,7 +87,9 @@ another database.
 
 With `--build`, it reads the environment files Next reads for a build —
 `.env.production.local`, `.env.local`, `.env.production`, `.env` — beside where
-it runs, after what is already in the environment. On Vercel without a database
+it runs, after what is already in the environment, and with Next's own loader,
+so `$VARIABLE` references expand as they do for the app. `--status` and
+`--rollback` read the development files, as `next dev` does. On Vercel without a database
 it fails the build; elsewhere an app without one starts its embedded database,
 which migrates itself.
 

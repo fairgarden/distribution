@@ -137,9 +137,16 @@ interface AppliedRow {
   applied_at: Date
 }
 
+/**
+ * Run `fn` holding the app's lock, so it sees no migration half-done.
+ *
+ * Only what writes creates the journal: looking at a database that has never
+ * been migrated leaves it as it was.
+ */
 const withLock = async <T>(
   pool: MigrationPool,
   { table, lock }: Journal,
+  { writes }: { writes: boolean },
   fn: (client: MigrationClient) => Promise<T>
 ): Promise<T> => {
   if (!IDENTIFIER.test(table)) throw new Error(`${table} is not a plain lower-case table name.`)
@@ -147,13 +154,15 @@ const withLock = async <T>(
   try {
     await client.query('select pg_advisory_lock($1)', [lock])
     try {
-      await client.query(`
-        create table if not exists ${table} (
-          tag text primary key,
-          hash text not null,
-          applied_at timestamptz not null default now()
-        )
-      `)
+      if (writes) {
+        await client.query(`
+          create table if not exists ${table} (
+            tag text primary key,
+            hash text not null,
+            applied_at timestamptz not null default now()
+          )
+        `)
+      }
       return await fn(client)
     } finally {
       await client.query('select pg_advisory_unlock($1)', [lock])
@@ -164,6 +173,9 @@ const withLock = async <T>(
 }
 
 const readApplied = async (client: MigrationClient, table: string): Promise<Map<string, AppliedRow>> => {
+  // No journal yet: nothing has run.
+  const { rows: found } = await client.query('select to_regclass($1) is not null as exists', [table])
+  if (!found[0]?.exists) return new Map()
   const { rows } = await client.query(`select tag, hash, applied_at from ${table}`)
   return new Map((rows as AppliedRow[]).map((row) => [row.tag, row]))
 }
@@ -179,8 +191,9 @@ const inTransaction = async (client: MigrationClient, fn: () => Promise<void>): 
   }
 }
 
+/** What has run, and what is pending. Changes nothing, not even to create the journal. */
 export const status = (pool: MigrationPool, directory: string, journal: Journal): Promise<MigrationStatus[]> =>
-  withLock(pool, journal, async (client) => {
+  withLock(pool, journal, { writes: false }, async (client) => {
     const migrations = readMigrations(directory)
     const applied = await readApplied(client, journal.table)
     const known = new Set(migrations.map((migration) => migration.tag))
@@ -206,19 +219,27 @@ export const status = (pool: MigrationPool, directory: string, journal: Journal)
   })
 
 /** Apply every pending migration, in order. Returns the tags applied. */
+/**
+ * Refuse a database ahead of this version: it has migrations only a newer
+ * one knows, and nothing this one does to it — forward or back — can be
+ * trusted not to break what they did.
+ */
+const refuseNewer = (migrations: Migration[], applied: Map<string, AppliedRow>): void => {
+  const known = new Set(migrations.map((migration) => migration.tag))
+  const unknown = [...applied.keys()].filter((tag) => !known.has(tag))
+  if (unknown.length > 0) {
+    throw new Error(
+      `The database has migrations this version does not know (${unknown.join(', ')}). ` +
+        'Run a newer version, or roll them back with it first.'
+    )
+  }
+}
+
 export const migrate = (pool: MigrationPool, directory: string, journal: Journal): Promise<string[]> =>
-  withLock(pool, journal, async (client) => {
+  withLock(pool, journal, { writes: true }, async (client) => {
     const migrations = readMigrations(directory)
     const applied = await readApplied(client, journal.table)
-    const known = new Set(migrations.map((migration) => migration.tag))
-
-    const unknown = [...applied.keys()].filter((tag) => !known.has(tag))
-    if (unknown.length > 0) {
-      throw new Error(
-        `The database has migrations this version does not know (${unknown.join(', ')}). ` +
-          'Run a newer version, or roll them back with it first.'
-      )
-    }
+    refuseNewer(migrations, applied)
     for (const migration of migrations) {
       const row = applied.get(migration.tag)
       if (row && row.hash !== migration.hash) {
@@ -252,9 +273,12 @@ export const rollback = (
   journal: Journal,
   { steps, to }: { steps?: number; to?: string } = {}
 ): Promise<string[]> =>
-  withLock(pool, journal, async (client) => {
+  withLock(pool, journal, { writes: false }, async (client) => {
     const migrations = readMigrations(directory)
     const applied = await readApplied(client, journal.table)
+    // Rolling back something older underneath them would leave the schema
+    // matching neither version.
+    refuseNewer(migrations, applied)
     const newestFirst = migrations.filter((migration) => applied.has(migration.tag)).reverse()
 
     let targets: Migration[]
@@ -264,6 +288,15 @@ export const rollback = (
       targets = index === -1 ? newestFirst : newestFirst.slice(0, index)
     } else {
       targets = newestFirst.slice(0, steps ?? 1)
+    }
+
+    // Its down file undoes what the file says now, not what ran.
+    const edited = targets.filter((migration) => applied.get(migration.tag)?.hash !== migration.hash)
+    if (edited.length > 0) {
+      throw new Error(
+        `${edited.map((migration) => migration.tag).join(', ')} changed after it was applied, so its ` +
+          'down migration may not undo what ran. Roll back with the version that applied it.'
+      )
     }
 
     const irreversible = targets.filter((migration) => !migration.down)

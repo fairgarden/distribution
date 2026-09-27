@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import {
   declaredMigrations,
@@ -101,18 +102,36 @@ export const databaseOf = (variables: string[], env: Env): Database | undefined 
   return undefined
 }
 
-/**
- * The same files Next reads for `mode`, highest precedence first; what is
- * already in the environment wins, as it does for Next.
- */
-export const loadEnvFiles = (root: string, mode: string): void => {
-  for (const file of [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env']) {
-    try {
-      process.loadEnvFile(path.join(root, file))
-    } catch {
-      // not there
-    }
+interface NextEnv {
+  loadEnvConfig(
+    dir: string,
+    dev?: boolean,
+    log?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void }
+  ): { loadedEnvFiles: Array<{ path: string }> }
+}
+
+/** Next's own loader: the project's, from the `next` it builds with, or this package's. */
+const nextEnv = (root: string): NextEnv => {
+  try {
+    const next = createRequire(path.join(root, 'package.json')).resolve('next/package.json')
+    return createRequire(next)('@next/env') as NextEnv
+  } catch {
+    return createRequire(import.meta.url)('@next/env') as NextEnv
   }
+}
+
+/**
+ * Read the environment files the way Next does for a build (or, with `dev`,
+ * for `next dev`): the same files, the same precedence below what is already
+ * set, and `$VARIABLE` references expanded — by Next's own loader, so this
+ * connects to the database the app will. Returns the files read.
+ */
+export const loadEnvFiles = (root: string, { dev }: { dev: boolean }): string[] => {
+  const { loadedEnvFiles } = nextEnv(root).loadEnvConfig(root, dev, {
+    info: () => {},
+    error: (...args) => console.error(...args),
+  })
+  return loadedEnvFiles.map((file) => file.path)
 }
 
 export type MigrateAction =

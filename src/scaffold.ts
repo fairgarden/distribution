@@ -54,11 +54,17 @@ const rootScripts = (monolith: boolean): Record<string, string> => {
     ? "--filter='./apps/*' --filter='!./apps/monolith'"
     : "--filter='./apps/*'"
   const docs = "--filter='./apps/*/docs' --filter='./packages/*/docs'"
-  // A build migrates what it deploys, once it has built: see `fg-dist migrate`.
+  // A build migrates what it deploys once it has built — see `fg-dist
+  // migrate` — and outside turbo, which would keep from it every variable an
+  // app's database may be named by that turbo.json does not list, and could
+  // skip it on a cache hit.
+  const migrate = (filter: string) => `pnpm ${filter} run --if-present migrate`
   return {
-    build: monolith ? 'turbo run build migrate --filter=./apps/monolith' : `turbo run build migrate ${apps}`,
+    build: monolith
+      ? `turbo run build --filter=./apps/monolith && ${migrate('--filter=./apps/monolith')}`
+      : `turbo run build ${apps} && ${migrate(apps)}`,
     dev: monolith ? 'turbo run dev --filter=./apps/monolith' : `turbo run dev ${apps}`,
-    'modular:build': `turbo run build migrate ${apps}`,
+    'modular:build': `turbo run build ${apps} && ${migrate(apps)}`,
     'modular:dev': `turbo run dev ${apps}`,
     'docs:build': `turbo run build ${docs}`,
     'docs:dev': `turbo run dev ${docs}`,
@@ -81,14 +87,6 @@ const turboJson = (monolith: string | undefined): string =>
     tasks: {
       build: { dependsOn: ['^build'], outputs: BUILD_OUTPUTS },
       ...(monolith ? { 'build:libs': { dependsOn: ['^build:libs', 'build'] } } : {}),
-      // After the build, and never from the cache: a cache hit would skip it
-      // for a database that has not seen it — a new preview's, say. Given the
-      // variables it decides by, which turbo otherwise keeps from it.
-      migrate: {
-        dependsOn: ['build'],
-        cache: false,
-        passThroughEnv: ['VERCEL', 'VERCEL_ENV', 'FG_*', 'DATABASE_URL*', 'POSTGRES_URL*'],
-      },
       lint: { dependsOn: ['^lint'] },
       // A fresh checkout has built none of the libraries an app's config loads.
       dev: { dependsOn: ['^build'], persistent: true, cache: false },

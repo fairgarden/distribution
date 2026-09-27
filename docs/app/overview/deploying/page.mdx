@@ -39,7 +39,7 @@ also what you want when scaling: splitting deployments is often the point.
 ## Databases
 
 A build migrates the databases of what it deploys, after it has built it:
-[`migrate`](/commands/migrate) runs as its own turbo task, after `build`. In a
+[`migrate`](/commands/migrate) runs as a step after turbo's `build`. In a
 monolith that is every mounted app that declares migrations, each into the
 database it uses; deployed separately, each app migrates its own.
 

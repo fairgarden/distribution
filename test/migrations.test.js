@@ -126,6 +126,33 @@ describe('the migrator', () => {
     assert.deepEqual(await tables(database, 'two\\_'), ['two_migrations', 'two_things'])
   })
 
+  test('looking at a database changes nothing, not even to create its journal', async () => {
+    const journal = { table: 'fresh_migrations', lock: 45 }
+    const directory = folder([{ tag: '0000_f', up: 'create table fresh_f (id int);' }])
+    assert.deepEqual((await status(database.pool, directory, journal)).map((row) => row.state), ['pending'])
+    assert.deepEqual(await tables(database, 'fresh\\_'), [])
+  })
+
+  test('rolls nothing back under migrations only a newer version knows', async () => {
+    const journal = { table: 'n_migrations', lock: 46 }
+    const newer = folder([
+      { tag: '0000_a', up: 'create table n_a (id int);', down: 'drop table n_a;' },
+      { tag: '0001_b', up: 'create table n_b (id int);', down: 'drop table n_b;' },
+    ])
+    await migrate(database.pool, newer, journal)
+    const older = folder([{ tag: '0000_a', up: 'create table n_a (id int);', down: 'drop table n_a;' }])
+    await assert.rejects(rollback(database.pool, older, journal), /does not know \(0001_b\)/)
+    assert.deepEqual(await tables(database, 'n\\_'), ['n_a', 'n_b', 'n_migrations'])
+  })
+
+  test('rolls nothing back with a down file for a migration edited since it ran', async () => {
+    const journal = { table: 'd_migrations', lock: 47 }
+    await migrate(database.pool, folder([{ tag: '0000_a', up: 'create table d_a (id int);', down: 'drop table d_a;' }]), journal)
+    const edited = folder([{ tag: '0000_a', up: 'create table d_other (id int);', down: 'drop table d_other;' }])
+    await assert.rejects(rollback(database.pool, edited, journal), /changed after it was applied, so its down migration may not undo what ran/)
+    assert.deepEqual(await tables(database, 'd\\_'), ['d_a', 'd_migrations'])
+  })
+
   test('takes no table name it would have to quote', async () => {
     await assert.rejects(
       migrate(database.pool, folder([]), { table: 'x; drop table t_migrations', lock: 1 }),
@@ -303,5 +330,24 @@ describe('migrating a monolith', () => {
     const result = await fgDist(root, ['migrate', '--build'], { FG_MIGRATE: 'build' })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /@acme\/members\s+applied 0000_init\s+\(DATABASE_URL\)/)
+  })
+
+  test('refuses --to without a migration after it, rather than rolling back one', async () => {
+    const { root } = monolith()
+    await fgDist(root, ['migrate'], { DATABASE_URL: database.url })
+    const result = await fgDist(root, ['migrate', '--rollback', '@acme/id', '--to'], { DATABASE_URL: database.url })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /--to needs a value/)
+    const listed = await fgDist(root, ['migrate', '--status', '@acme/id'], { DATABASE_URL: database.url })
+    assert.match(listed.stdout, /applied\s+0000_init/)
+  })
+
+  test('expands $VARIABLE references in environment files, as Next does', async () => {
+    const { root } = monolith()
+    // the monolith here has no `next`: this is the loader fg-dist carries
+    writeFileSync(path.join(root, '.env.production'), `PRIMARY=${database.url}\nDATABASE_URL=$PRIMARY\n`)
+    const result = await fgDist(root, ['migrate', '--build'], { FG_MIGRATE: 'build' })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /@acme\/id\s+(applied 0000_init|up to date)\s+\(DATABASE_URL\)/)
   })
 })

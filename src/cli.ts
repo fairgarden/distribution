@@ -211,8 +211,16 @@ const parseArgs = (argv: string[]): Args => {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
+    // What an option takes. Missing, it is refused: `--to` with nothing after
+    // it must not become a different rollback than the one asked for.
+    const value = (): string => {
+      const next = argv[index + 1]
+      if (next === undefined || next.startsWith('--')) throw new Error(`${arg} needs a value.`)
+      index += 1
+      return next
+    }
     if (arg === '--cwd') {
-      args.cwd = path.resolve(argv[++index] ?? '.')
+      args.cwd = path.resolve(value())
     } else if (arg === '--check') {
       args.check = true
     } else if (arg === '--build') {
@@ -222,7 +230,7 @@ const parseArgs = (argv: string[]): Args => {
     } else if (arg === '--rollback') {
       args.rollback = true
     } else if (arg === '--steps') {
-      args.steps = Number(argv[++index])
+      args.steps = Number(value())
     } else if (arg === '--major') {
       args.major = true
       args.bump = 'major'
@@ -231,21 +239,21 @@ const parseArgs = (argv: string[]): Args => {
     } else if (arg === '--patch') {
       args.bump = 'patch'
     } else if (arg === '--id') {
-      args.id = argv[++index]
+      args.id = value()
     } else if (arg === '--no-fetch') {
       args.fetch = false
     } else if (arg === '--dry-run') {
       args.dryRun = true
     } else if (arg === '--name') {
-      args.name = argv[++index]
+      args.name = value()
     } else if (arg === '--at') {
-      args.at = argv[++index]
+      args.at = value()
     } else if (arg === '--no-git') {
       args.git = false
     } else if (arg === '--url') {
-      args.url = argv[++index]
+      args.url = value()
     } else if (arg === '--extends') {
-      args.extends = argv[++index]
+      args.extends = value()
     } else if (arg === '--separate') {
       args.separate = true
     } else if (arg === '--ssh') {
@@ -259,13 +267,13 @@ const parseArgs = (argv: string[]): Args => {
     } else if (arg === '--no-push') {
       args.push = false
     } else if (arg === '--copyright') {
-      args.copyright = argv[++index]
+      args.copyright = value()
     } else if (arg === '--direct') {
       args.direct = true
     } else if (arg === '--next') {
       // How main moves on after a release, as the publish workflow is told:
       // carry on the prerelease, change its stage, or bump.
-      const next = argv[++index]
+      const next = value()
       if (next === 'prerelease') {
         // as it is
       } else if (next === 'alpha' || next === 'beta' || next === 'rc') {
@@ -278,19 +286,19 @@ const parseArgs = (argv: string[]): Args => {
         throw new Error(`--next is prerelease, alpha, beta, rc, patch, minor, major or stable; not ${next}.`)
       }
     } else if (arg === '--pr') {
-      args.pr = Number(argv[++index])
+      args.pr = Number(value())
     } else if (arg === '--repo') {
-      args.repo = argv[++index]
+      args.repo = value()
     } else if (arg === '--stable') {
       args.stable = true
     } else if (arg === '--distribution') {
       args.distribution = true
     } else if (arg === '--to') {
-      args.to = argv[++index]
+      args.to = value()
     } else if (arg === '--base') {
-      args.base = argv[++index]
+      args.base = value()
     } else if (arg === '--out') {
-      args.out = path.resolve(argv[++index] ?? '.')
+      args.out = path.resolve(value())
     } else if (!arg.startsWith('-')) {
       if (args.command) args.names.push(arg)
       else args.command = arg
@@ -1067,7 +1075,8 @@ const main = async (): Promise<number> => {
     }
 
     // A build's environment, as Next's build reads it; by hand, the one being worked in.
-    loadEnvFiles(root, args.build ? 'production' : (process.env.NODE_ENV ?? 'development'))
+    const envFiles = loadEnvFiles(root, { dev: !args.build && process.env.NODE_ENV !== 'production' })
+    if (envFiles.length > 0) process.stdout.write(`Environment from ${envFiles.join(', ')}\n`)
 
     if (args.build) {
       const decision = inBuild(process.env)
