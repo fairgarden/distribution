@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
+import '@fairgarden/design/utils/global.css'
+import '@fairgarden/design/utils/fonts'
+import { ClientProvider } from '@fairgarden/design/utils/ClientProvider'
 
 export const metadata: Metadata = {
   title: '@fairgarden/distribution',
@@ -7,21 +9,16 @@ export const metadata: Metadata = {
 }
 
 /**
- * Unstyled on purpose. The nav is here so every page has a way back, since the
- * pages themselves only cross-link within a section.
+ * The document: the design system's global stylesheet (tokens, the Radix
+ * scales, the follow-OS mode and the roles), its self-hosted fonts with their
+ * metric-matched fallbacks, and `ClientProvider`, which gives the components
+ * the locale and its direction. The docs chrome is the `(lib)` layout.
  */
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
       <body>
-        <nav>
-          <Link href="/">Home</Link> · <Link href="/overview">Overview</Link> ·{' '}
-          <Link href="/commands">Commands</Link> ·{' '}
-          <Link href="/functions">Functions</Link>
-        </nav>
-        <main>{children}</main>
+        <ClientProvider locale="en-US">{children}</ClientProvider>
       </body>
     </html>
   )

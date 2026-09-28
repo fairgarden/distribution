@@ -1,0 +1,101 @@
+# Extending
+
+A distribution may extend another.
+
+The extension ships the parent's modules and
+may move ahead of them, but can never ship anything older — otherwise "extends"
+would mean shipping a regression.
+
+```json
+{
+  "name": "@acme/core",
+  "version": "26.09.01",
+  "dependencies": { "@fairgarden/core": "26.6.1" },
+  "distribution": { "extends": "@fairgarden/core" }
+}
+```
+
+The parent is an ordinary dependency, so whatever version is installed is the
+one being extended.
+
+## Starting one
+
+```bash
+pnpm dist init distribution acme --name @acme/core --extends @fairgarden/core
+cd acme && pnpm install
+pnpm dist inherit
+```
+
+[`inherit`](/commands/inherit) adds every module the parent ships, where the
+parent has it, at the commit the parent pins — so an extension starts out
+shipping exactly its parent. It carries the parent's license notice too: its
+copyright joins the extension's own, or, under a different license, the
+parent's is kept beside it. From there it adds its own with
+[`add-module`](/commands/add-module), moves ahead with [`bump`](/commands/bump),
+and changes what it inherited by [forking it](/overview/forking). When the
+parent starts shipping something new, `check` fails until `inherit` adds it.
+
+## The floor
+
+| Module | parent ships | extension ships | |
+| --- | --- | --- | --- |
+| `@fg/id` | `1.2.3` | `1.4.0` | ahead, fine |
+| `@fg/design` | `1.5.6` | `1.5.6` | matching, fine |
+| `@fg/membership` | `1.0.0` | `0.9.0` | behind, refused |
+
+Dropping an inherited module is refused too. Ranges are compared by the oldest
+version they allow, since that is the oldest thing the distribution could
+resolve to — `^1.1.0` under a parent's `^1.2.0` is a violation.
+
+What the extension ships comes from its submodule checkouts; what the parent
+ships comes from its published manifest.
+
+## What enforces it
+
+- [`pnpm dist check`](/commands/check) fails, which is what to run in CI.
+- [`pnpm dist sync`](/commands/sync) reports it alongside available upgrades.
+- `withMonolith` refuses to build, where the distribution has a monolith.
+
+```
+@acme/core extends @fairgarden/core, so it cannot ship anything older:
+  @fg/id 1.1.0 is older than the 1.2.3 @fairgarden/core ships
+An extension may move ahead of what it extends, never behind it.
+```
+
+A distribution whose apps [deploy separately](/overview/deploying) has no
+monolith build to fail, so `check` is the one that matters there.
+
+## Publishing a distribution
+
+An extension reads its parent from npm, so a distribution others extend
+publishes itself:
+
+```bash
+pnpm dist workflows --distribution   # once: the publish workflow, and public on npm
+# run the workflow to publish; after each release:
+pnpm next-version                    # start the next development cycle, and its version
+```
+
+What it publishes is its manifest — recording each module's version, place,
+repository and commit, see
+[Published distributions](/overview/versioning#published-distributions) — and
+its `policies/`, which an extension's policy is built on. Every push to main
+publishes a canary.
+
+## Forks
+
+A parent that ships a fork publishes the fork, and the extension inherits the
+same fork. An extension can fork any module too, to fix it before its parent or
+upstream does. The floor compares versions, so a fork keeps up with a parent
+that moves ahead by taking upstream's releases: `bump` merges them in. See
+[Forking a module](/overview/forking).
+
+## What it is for
+
+**A stricter license on top of a permissive base.** The proprietary
+distribution extends the MIT one, reuses its modules, and adds or replaces the
+few it needs. The shared modules stay shared rather than forked.
+
+**Someone else's distribution on top of yours.** A user keeps their own `core`
+repository extending the published one, taking upgrades as they come and
+staying ahead where they need to be.
