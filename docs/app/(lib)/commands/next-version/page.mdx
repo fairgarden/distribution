@@ -1,0 +1,190 @@
+# next-version
+
+Starts the next development cycle, once the version main was working towards
+has been published — and deciding what the next one is, is the whole of it.
+
+```bash
+pnpm next-version --patch | --minor | --major [--dry-run] [--no-push]
+```
+
+Run it in a module, after the [publish workflow](/commands/workflows) has shipped
+the version main is sitting on. It used to be called `release`, which still
+works and says so; `release --check` is still what the publish workflow runs
+before it publishes.
+
+In a distribution it moves the distribution's version on instead — see
+[below](#in-a-distribution).
+
+Each branch it cuts opens its version's section in `CHANGELOG.md`, so the next
+pull request has somewhere to add its line. The version just published keeps
+its own, which the publish workflow has made its GitHub release's notes. See
+[Changelogs](/overview/changelogs).
+
+## It will not choose for you
+
+What the next version is, is a judgement about what changed, so it is asked
+for. Run it with no flag and it prints the three and stops:
+
+```
+Released 1.6.0, tagged v1.6.0
+
+What is the next version?
+
+  pnpm next-version --patch  1.6.1    stays on this line; nothing branches off
+  pnpm next-version --minor  1.7.0    v1-6 keeps 1.6.x
+  pnpm next-version --major  2.0.0    v1-6 keeps 1.6.x
+
+Or `pnpm dist prerelease --major` to start the next line beside main, without
+moving main off this one.
+```
+
+A **patch** says this branch *is* the line and stays on it — nothing branches
+off, because there is nothing for a branch to be behind. That is what a
+maintenance branch releases: `v1-6` at `1.6.1` releases and takes `1.6.2`.
+
+A **minor** or **major** says main is leaving this line, so something has to
+stay behind to carry its fixes:
+
+```
+Released 1.6.0, tagged v1.6.0
+
+  v1-6           1.6.1  cut from v1.6.0, where 1.6.0 is maintained
+  release/v1.7.0 1.7.0  opened against main
+```
+
+## Why it runs after, not before
+
+Main carries the next unreleased version. It is at `1.6.0` because `1.6.0` is
+what is being worked towards; once that is published, main has to move, and
+`1.6.x` has to continue somewhere that is not main.
+
+So the release is the moment both branches appear — see
+[Releasing a module](/overview/releasing).
+
+The bump to main is a pull request rather than a push, because main's history is
+reviewed like anything else. The maintenance branch is not a proposal, so it is
+just pushed.
+
+## What each branch gets
+
+| Branch | Version | Cut from |
+| --- | --- | --- |
+| `v1-6` | `1.6.1` | the `v1.6.0` tag |
+| `release/v1.7.0` | `1.7.0` | wherever you are |
+
+The maintenance branch is cut from the **tag**, not from main. Main may have
+moved on while the release was being dispatched, and those commits are not part
+of `1.6.x`. If there is no tag — the workflow has not run — it falls back to
+`HEAD` and says so, because that is a guess and you should know it was made.
+
+A patch release does not start a new line: releasing `1.6.1` from `v1-6` opens
+`v1-6` again at `1.6.2`. Rolling to `1.7.0` there would jump the line main is
+already on.
+
+The maintenance branch is the same for `--minor` and `--major` — `v1-6` is
+where `1.6.x` lives regardless of what comes next.
+
+## Prereleases
+
+A prerelease gets no maintenance branch. There is no `2.0.0-alpha.0` that
+someone is still running and needs a fix for, so it only moves forward — and
+because there is only one way to go, no flag is needed:
+
+```bash
+pnpm next-version              # 2.0.0-alpha.0 -> 2.0.0-alpha.1
+pnpm next-version --id beta    # 2.0.0-alpha.3 -> 2.0.0-beta.0
+pnpm next-version --id rc      # 2.0.0-beta.2  -> 2.0.0-rc.0
+```
+
+`--id` starts a new identifier when the version is not already on it, and counts
+up when it is. To start a prerelease line in the first place, see
+[`prerelease`](/commands/prerelease).
+
+## Both branches record their version
+
+[`readme`](/commands/readme) runs on each branch before the commit, so the
+readme states `1.6.1` on `v1-6` and `1.7.0` on the pull request. Browsing either
+one shows what it is, which is the whole reason that block exists.
+
+## What it refuses
+
+- **Uncommitted changes** — both branches are cut from what is committed, and
+  the bumps are committed on top. Anything in the working tree would be swept in.
+- **Detached HEAD** — it has to know which branch to come back to, and which
+  branch the pull request is against.
+- **A distribution**, for `--patch`, `--minor` and `--major` — its version is its
+  month; see [below](#in-a-distribution). Its modules release on their own, and
+  [`bump`](/commands/bump) takes them.
+- **A branch that already exists** — `v1-6` is not moved onto an existing
+  branch. Delete it, or you are releasing a version that has been released.
+
+## Options
+
+| Option | Effect |
+| --- | --- |
+| `--patch` | stay on this line; nothing branches off |
+| `--minor` | move main to the next minor, leaving this one behind |
+| `--major` | move main to the next major, leaving this one behind |
+| `--id <name>` | prerelease identifier: `alpha`, `beta`, `rc` |
+| `--dry-run` | print the branches and their versions, write nothing |
+| `--no-push` | create the branches locally, push nothing, open no pull request |
+| `--direct` | commit main's move where it runs and push it, no pull request |
+| `--next <how>` | how to move on, as the publish workflow is told it |
+
+The pull request is opened with `gh`. If it is not installed the branches are
+still pushed, and it says so rather than pretending.
+
+However it ends, you are left on the branch you started from, at the version
+main still carries — the bump is on a branch, waiting for review.
+
+## Until it merges
+
+The publish workflow holds every open pull request once it has released — see
+[Changelogs](/overview/changelogs#between-a-release-and-the-next-version) — and
+the pull request `next-version` opens is what lets them through. Nothing else can
+merge until it does, so run it straight after the release.
+
+## Moving on without a pull request
+
+```bash
+pnpm next-version --direct --next <prerelease|alpha|beta|rc|patch|minor|major|stable>
+```
+
+`--direct` commits main's move where it runs and pushes it there, rather than
+opening a pull request, committing only files it tracks. `--next` is the same
+choice as the flags, in one word: `prerelease` carries the stage on, `alpha`,
+`beta` and `rc` change it, `patch`, `minor` and `major` bump, and `stable`, for a
+distribution, leaves its stages.
+
+The publish workflow does not use it: a workflow's own token cannot push to a
+protected main. A job given a GitHub App's token, with the app allowed to bypass
+main's rules, could run it straight after releasing.
+
+## In a distribution
+
+```bash
+pnpm next-version [--id <alpha|beta|rc>] [--stable] [--dry-run]
+```
+
+A distribution is versioned `YY.MM.NN` — see
+[Versioning](/overview/versioning#months-for-end-users) — and `next-version` sets the
+version the publish workflow releases next. Nothing branches: a distribution has
+no lines of its own to maintain.
+
+| The manifest says | | `next-version` moves it to |
+| --- | --- | --- |
+| `26.09.01-alpha.0`, published | | `26.09.01-alpha.1` |
+| `26.09.01-alpha.1`, published | `--id beta` | `26.09.01-beta.0` |
+| `26.09.01-beta.0`, published | `--stable` | `26.09.01` |
+| `26.09.01`, published | | `26.09.02` |
+| `26.09.01`, published | `--id alpha` | `26.09.02-alpha.0` |
+| `26.09.01-alpha.3`, published or not, in October | | `26.10.01-alpha.0` |
+| `26.09.01-alpha.1`, not published | | unchanged |
+
+Run it after the workflow publishes, to move on, and again when a month turns
+before the next release goes out. `CHANGELOG.md` follows: a new section when it
+moves on, the same one renamed when a release never published changes month. Published means tagged here — the workflow tags
+what it publishes — or on npm. Stages only move forward: `alpha`, `beta`, `rc`,
+then stable. `--check`, which the workflow runs, refuses a version of a month
+that is over, and records what the distribution ships in the manifest it
+publishes, spelled as npm spells it.

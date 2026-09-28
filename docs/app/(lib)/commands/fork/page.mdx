@@ -1,0 +1,41 @@
+# fork
+
+Checks a module out from your fork of it, keeping where it came from.
+
+```bash
+pnpm dist fork <name> <url> [--ssh] [--no-push]
+```
+
+See
+[Forking a module](/overview/forking) for the whole of it.
+
+```bash
+pnpm dist fork id https://github.com/acme/id.git
+```
+
+```
+apps/id is checked out from https://github.com/acme/id.git
+forked from https://github.com/fairgarden/id.git, which .gitmodules records as its upstream
+Pinned commit pushed to acme-core, where everything this distribution pins in the fork lives.
+```
+
+## What it does
+
+- Pushes the pinned commit to the fork, on a branch named after the
+  distribution, so another clone can check it out. This happens first, so a
+  refusal — the branch has moved on without it — changes nothing.
+- Records the fork as the submodule's `url` and the original as its
+  `upstream`, in `.gitmodules`, and points the checkout's `origin` at the fork.
+
+The fork has to exist already, and a url that cannot be read is refused before
+anything is written. Forking a fork keeps the original upstream. Commit
+`.gitmodules` and the module afterwards.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--ssh` | record the url as given rather than [rewriting it to https](/overview/urls) |
+| `--no-push` | push nothing; the pin has to reach the fork before anyone else can use it |
+
+The fork is noted in the distribution's [changelog](/overview/changelogs).

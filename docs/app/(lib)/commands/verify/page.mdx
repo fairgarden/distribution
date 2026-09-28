@@ -1,0 +1,59 @@
+# verify
+
+Fails when a file fg-dist writes no longer says what is true, and names the
+command that puts it right.
+
+```bash
+pnpm dist verify
+```
+
+Each of these is written from something else, and
+goes stale when that moves without it — and nothing notices by looking: a stale
+version in a readme reads exactly like a current one.
+
+```
+ok     Readme.md
+stale  pnpm-workspace.yaml  does not override every module to its checkout
+                            Run `pnpm dist overrides`.
+ok     turbo.json
+```
+
+## What it checks
+
+In a module, the readme: its [version and release section](/commands/readme),
+from its own `package.json`.
+
+In a distribution:
+
+| File | Written from | Put right with |
+| --- | --- | --- |
+| The readme | its version, and each module's version and pin | [`readme`](/commands/readme) |
+| `pnpm-workspace.yaml` | the modules it ships | [`overrides`](/commands/overrides) |
+| `turbo.json` | the organization's policy, when it has one | [`policy setup`](/commands/policy) |
+| — | what it extends, when it extends one | [`check`](/commands/check) says |
+
+Only what the distribution can fix. Its modules' readmes are checked in their
+own CI: at a pinned commit, one could only be changed by moving the pin.
+
+## In CI
+
+[`workflows`](/commands/workflows) gives every module, and the distribution,
+`.github/workflows/verify.yml`, which runs this on each pull request. Make its
+*Generated files* job a required status check on main, or it only advises.
+
+A distribution's readme says whether each pin is at a release, which takes the
+modules' tags, so its workflow checks them out with their history. That is also
+why it can go stale from outside: a module tagging the very commit the
+distribution pins turns "unreleased, after v1.2.0" into "v1.3.0". The commands
+that move a pin — [`bump`](/commands/bump), [`fork`](/commands/fork),
+[`contribute`](/commands/contribute), [`unfork`](/commands/unfork),
+[`inherit`](/commands/inherit), [`add-module`](/commands/add-module),
+[`extract`](/commands/extract) — rewrite the distribution's readme as they go,
+so this is the rare case, and `pnpm dist readme` is the fix.
+
+## Exit codes
+
+| | |
+| --- | --- |
+| `0` | everything is current |
+| `1` | something is stale, or could not be read |

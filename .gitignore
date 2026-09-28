@@ -7,3 +7,8 @@ test/tmp
 # Created only by running pnpm install from this directory, which builds a
 # second workspace. Inside a distribution, install from its root.
 pnpm-lock.yaml
+
+# Next.js build dirs at any depth: the docs site's, the NEXT_DIST_DIR ones
+# parallel builds use, and any Turbopack writes outside docs/.
+.next
+.next-*

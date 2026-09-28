@@ -1,0 +1,75 @@
+# Deploying
+
+A distribution made only of Next apps can serve them from one deployment.
+
+A
+complex one cannot, and deploys each app on its own.
+
+## One deployment
+
+`apps/monolith` mounts every app at a path and deploys as a single Next app.
+That is `@fairgarden/monolith`'s job; `add-module` wires it up:
+
+```
+Added apps/widget from https://github.com/acme/widget.git
+Linked through the workspace in apps/monolith/package.json
+Mounted at /widget in apps/monolith/next.config.ts
+```
+
+This is the right shape for a `core` or `starter` distribution — one thing to
+run, one thing to deploy.
+
+## Separate deployments
+
+```bash
+pnpm dist init distribution enterprise --name @acme/enterprise --separate
+```
+
+Scaffolds a distribution with no monolith app at all. Modules still land under
+`apps/` as submodules, and each is deployed on its own:
+
+```
+Added apps/widget from https://github.com/acme/widget.git
+Shipping @acme/widget@1.2.0, as the checkout declares it
+No monolith app here, so it is shipped but not mounted. Deploy it on its own.
+```
+
+This is the right shape once a distribution is too complex for one deployment,
+and no hardship for an audience already running deployment infrastructure. It is
+also what you want when scaling: splitting deployments is often the point.
+
+## Databases
+
+A build migrates the databases of what it deploys, after it has built it:
+[`migrate`](/commands/migrate) runs as a step after turbo's `build`. In a
+monolith that is every mounted app that declares migrations, each into the
+database it uses; deployed separately, each app migrates its own.
+
+Vercel production builds migrate. A preview build does only once it is given
+`FG_MIGRATE=build` — which is right when each preview has its own database, and
+wrong while they share production's. A Vercel rollback runs no build, so it
+undoes no migration: each has to work with the release before it too.
+
+## Environment
+
+A build first checks that the deployment has what its apps need — `fg-dist env
+check`, from what each app declares — and refuses to go on without it, naming
+every variable. [`pnpm dist env setup`](/commands/env) adds them through the
+Vercel CLI: one project for a monolith, one per app without one, with the
+secrets apps share set alike in each. `pnpm dist env rotate` rotates them with
+no downtime, and `pnpm dist env workflow` schedules it monthly.
+
+## Which app composes the others
+
+The app that composes modules is identified by its Next config calling
+`withMonolith` — not by depending on `@fairgarden/monolith`, since every module
+depends on that too, for its portability check and its portable `Link`.
+
+So a distribution can name its composing app whatever it likes, and one with no
+such config simply has none.
+
+## Consequences for the floor
+
+A monolith build checks the [extension floor](/overview/extending) before it
+starts. With no monolith there is no such build, so run
+[`pnpm dist check`](/commands/check) in CI instead.

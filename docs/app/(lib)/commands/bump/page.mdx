@@ -1,0 +1,62 @@
+# bump
+
+Moves each module to its newest version.
+
+```bash
+pnpm dist bump [name...] [--major] [--dry-run] [--no-fetch] [--no-push]
+```
+
+```bash
+pnpm dist bump                 # newest patch or minor
+pnpm dist bump --major         # include majors
+pnpm dist bump id design       # only these
+pnpm dist bump --dry-run       # report without moving
+```
+
+```
+apps/widget  v1.0.0 -> v1.1.0
+packages/design  v0.3.0 -> v0.3.1
+
+Submodule pointers moved. Commit them to record the new versions.
+```
+
+Majors are held back unless asked for: they are the ones that need someone to
+read a changelog first.
+
+## What it touches
+
+The submodule checkout, and nothing else. No `package.json` is rewritten — pnpm
+stays in charge of resolution, and
+[the checkout is the version](/overview/versioning#where-a-version-comes-from).
+Nothing is committed either; the moved pointers are left for you.
+
+Only tags that parse as semver count as an upgrade. Commits past the newest tag
+are never bumped to: a commit makes no statement about what changed, which is
+what a version is for.
+
+## Forks
+
+A [fork](/overview/forking) takes upstream's releases. When the release already
+has everything the fork adds, the fork just moves to it; otherwise the release
+is merged into the fork, keeping its work on top, and pushed to the fork's
+distribution branch so other clones can fetch the new pin:
+
+```
+apps/id  v1.2.0 -> v1.3.0  (fork: merged, pushed to acme-core)
+```
+
+A merge, not a rebase, so the commits older distributions pinned stay in the
+fork. One that conflicts is left for you, with the command to run. `--no-push`
+keeps it local.
+
+## Safety
+
+It refuses to move a submodule with uncommitted changes, rather than fail part
+way through a checkout or discard work. [`sync`](/commands/sync) flags the same
+thing, so you see it first.
+
+An extension will not be moved below what its parent ships — see
+[Extending](/overview/extending).
+
+Each move is noted in the distribution's [changelog](/overview/changelogs), linking the notes of every
+release it takes in — `1.2.0 → 1.4.0` links 1.3.0's as well as 1.4.0's, since each has only its own changes.

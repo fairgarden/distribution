@@ -1,0 +1,51 @@
+# init
+
+Scaffolds a repository.
+
+```bash
+pnpm dist init <kind> [dir] [--name <name>] [--url <git-url>] [--extends <name>] [--separate] [--copyright <holder>]
+```
+
+`kind` is `distribution`, `monolith` or `module`.
+
+```bash
+pnpx @fairgarden/distribution init distribution acme \
+  --name @acme/core --url https://github.com/acme/core.git
+```
+
+Nothing is written over a directory that already has anything in it. `git init`
+runs unless you pass `--no-git`, which matters because modules are consumed as
+submodules.
+
+## Kinds
+
+**`distribution`** — a pnpm workspace whose root `package.json` is the
+distribution manifest: starting at this month's first release, in alpha —
+`26.09.01-alpha.0` — with `extends` when given.
+Includes `apps/monolith` unless `--separate`.
+
+**`monolith`** — the same workspace without the distribution manifest, for a
+repository that composes apps but does not ship as a versioned distribution.
+
+**`module`** — an ordinary Next app with the things that keep it mountable: the
+portability check, the lint rules and a portable `Link` bound to its package
+name.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `--name <name>` | package name; defaults to the directory name |
+| `--url <git-url>` | where the repository will live; becomes `origin` and `repository` |
+| `--extends <name>` | distribution this one extends; then `pnpm install` and [`inherit`](/commands/inherit) to ship its modules |
+| `--separate` | a distribution with no monolith, whose apps deploy separately |
+| `--copyright <holder>` | who holds the copyright on its MIT license; default, the git user |
+| `--no-git` | skip `git init` |
+
+Every kind starts under the MIT license: a `LICENSE` naming the holder and the
+year, and `"license": "MIT"` in each `package.json`. An extension also carries
+its parent's notice, once [`inherit`](/commands/inherit) can read it.
+
+`--url` matters most for a module, since that is the url a distribution will add
+it as a submodule by. Without it you are told the repository has no remote. An
+SSH url is [rewritten to https](/overview/urls).
